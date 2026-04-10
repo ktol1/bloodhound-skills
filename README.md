@@ -146,44 +146,19 @@ svc-alfresco (ASREP Roastable)
 
 ## 🎨 效果预览
 
-### HTB 真实 AD 域环境实测
+### HTB 真实 AD 域环境实测 - 动态全景攻击链路 (Demo)
 
-动态交互式全景攻击链路 (基于 `svc-alfresco -> Domain Admins` 路径发现)，涵盖了特权路径(`Shadow Credentials`, `GenericWrite` 等) 的逐步解析与风险标识：
+基于 `svc-alfresco -> Domain Admins` 的真实靶场路径推演。**点击下方链接即可在浏览器中体验完整交互效果（D3.js 渲染，可自由拖拽、缩放及悬浮查看风险详情）**：
+
+:point_right: **👉 [在线查看交互式攻击全景推演报告 (HTML Demo)](https://htmlpreview.github.io/?https://github.com/ktol1/bloodhound-analyzer/blob/main/svc-alfresco-attack-paths.html)** :point_left:
 
 <div align="center">
-  <img src="screenshots/svc-alfresco-attack-path.png" alt="Interactive Attack Path" width="800"/>
+  <br>
+  👉 <a href="https://htmlpreview.github.io/?https://github.com/ktol1/bloodhound-analyzer/blob/main/svc-alfresco-attack-paths.html"><b>点击体验实时可交互图形及攻击原理侧边栏</b></a> 👈
+  <br><br>
 </div>
 
----
-
-### 交互式攻击路径图
-
-![Attack Path Graph](screenshots/attack_paths_preview.png)
-
-*节点可拖拽 | 滚轮缩放 | 悬停查看详情*
-
-</div>
-
-### 命令行输出
-
-```
-[*] 加载 BloodHound 数据...
-[*] 构建关系图...
-[*] 查找攻击路径...
-
-=== 攻击路径分析 ===
-
-🔴 High Risk | 3 步
-
-svc-alfresco → Service Accounts [MemberOf]
-    ↓
-Service Accounts → Enterprise Admins [GenericWrite]
-    ↓
-Enterprise Admins → Domain Admins [Contains]
-
-⚡ 攻击方法: ASREP Roasting + ACL Abuse
-```
-
+*你也可以直接下载项目中的 [`svc-alfresco-attack-paths.html`](./svc-alfresco-attack-paths.html) 并在本地浏览器打开，无需服务器支持，直接拥有动态推演界面。*
 ---
 
 ## 📁 项目结构
