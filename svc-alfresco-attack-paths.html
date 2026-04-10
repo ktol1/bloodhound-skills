@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Attack Path - Interactive</title>
+    <script src="d3.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Microsoft YaHei', 'Segoe UI', Arial, sans-serif;
+            background: #0a0e17;
+            color: #e0e0e0;
+            overflow: hidden;
+        }
+        #container {
+            display: flex;
+            width: 100vw;
+            height: 100vh;
+        }
+        #graph-container {
+            flex: 1;
+            position: relative;
+            background: linear-gradient(135deg, #0f1419 0%, #1a1f2e 50%, #0d1117 100%);
+        }
+        #graph { width: 100%; height: 100%; }
+        #sidebar {
+            width: 420px;
+            background: linear-gradient(180deg, #151b26 0%, #0d1117 100%);
+            border-left: 1px solid #00ff88;
+            overflow-y: auto;
+            padding: 0;
+        }
+        .sidebar-header {
+            background: linear-gradient(135deg, #00ff88 0%, #00cc6a 100%);
+            padding: 20px;
+            color: #0a0e17;
+        }
+        .sidebar-header h2 {
+            font-size: 18px;
+            margin-bottom: 5px;
+        }
+        .sidebar-header p {
+            font-size: 12px;
+            opacity: 0.8;
+        }
+        .path-section {
+            padding: 15px 20px;
+            border-bottom: 1px solid #1e2836;
+        }
+        .path-section:hover {
+            background: rgba(0, 255, 136, 0.05);
+        }
+        .path-number {
+            display: inline-block;
+            background: #ff4757;
+            color: #fff;
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+        .path-number.medium { background: #ffa502; }
+        .path-number.low { background: #2ed573; }
+        .path-chain {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            align-items: center;
+            margin: 10px 0;
+        }
+        .node-badge {
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 500;
+            white-space: nowrap;
+        }
+        .node-badge.user { background: linear-gradient(135deg, #ff6b6b, #ee5a5a); color: #fff; }
+        .node-badge.group { background: linear-gradient(135deg, #ffe66d, #ffd93d); color: #1a1a2e; }
+        .node-badge.domain { background: linear-gradient(135deg, #a29bfe, #8b80ff); color: #fff; }
+        .node-badge.target { background: linear-gradient(135deg, #ff4757, #ff3344); color: #fff; box-shadow: 0 0 15px rgba(255,71,87,0.4); }
+        .arrow-icon {
+            color: #00ff88;
+            font-size: 14px;
+        }
+        .relation-badge {
+            background: rgba(255,255,255,0.1);
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 9px;
+            color: #888;
+            border: 1px solid #333;
+        }
+        .relation-badge.high { border-color: #ff4757; color: #ff4757; }
+        .relation-badge.medium { border-color: #ffa502; color: #ffa502; }
+        .attack-steps {
+            margin-top: 12px;
+            padding: 12px;
+            background: rgba(0,0,0,0.3);
+            border-radius: 8px;
+            border-left: 3px solid #00ff88;
+        }
+        .step-title {
+            color: #00ff88;
+            font-size: 12px;
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+        .step-item {
+            display: flex;
+            align-items: flex-start;
+            margin: 8px 0;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+        .step-num {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 20px;
+            height: 20px;
+            background: #00ff88;
+            color: #0a0e17;
+            border-radius: 50%;
+            font-size: 11px;
+            font-weight: bold;
+            margin-right: 10px;
+            flex-shrink: 0;
+        }
+        .step-text { color: #ccc; }
+        .step-text code {
+            background: rgba(0,255,136,0.15);
+            color: #00ff88;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 11px;
+        }
+        .legend {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            background: rgba(21, 27, 38, 0.95);
+            border: 1px solid #333;
+            border-radius: 12px;
+            padding: 15px;
+            z-index: 50;
+        }
+        .legend-title { color: #00ff88; margin-bottom: 12px; font-weight: bold; font-size: 13px; }
+        .legend-item { display: flex; align-items: center; margin: 6px 0; font-size: 11px; }
+        .legend-dot { width: 14px; height: 14px; border-radius: 50%; margin-right: 10px; }
+        .stats {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(21, 27, 38, 0.95);
+            border: 1px solid #333;
+            border-radius: 12px;
+            padding: 15px 20px;
+            z-index: 50;
+        }
+        .stats-title { color: #00ff88; margin-bottom: 8px; font-weight: bold; font-size: 13px; }
+        .stat-item { margin: 4px 0; font-size: 12px; }
+        .stat-value { color: #00ff88; font-weight: bold; }
+        .tooltip {
+            position: absolute;
+            background: rgba(21, 27, 38, 0.98);
+            border: 2px solid #00ff88;
+            border-radius: 8px;
+            padding: 10px 14px;
+            font-size: 12px;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.2s;
+            z-index: 200;
+            max-width: 200px;
+        }
+        .tooltip.visible { opacity: 1; }
+        .tooltip-title { color: #00ff88; font-weight: bold; }
+        .tooltip-type { color: #888; font-size: 11px; margin-top: 3px; }
+        .instructions {
+            position: absolute;
+            bottom: 20px;
+            right: 440px;
+            background: rgba(21, 27, 38, 0.9);
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 10px 15px;
+            font-size: 11px;
+            color: #666;
+        }
+        /* D3 Graph Styles */
+        .node circle { cursor: grab; transition: all 0.2s; }
+        .node circle:active { cursor: grabbing; }
+        .node:hover circle { filter: brightness(1.3); stroke-width: 4px !important; }
+        .node text { font-size: 11px; fill: #fff; text-anchor: middle; text-shadow: 0 1px 4px rgba(0,0,0,0.9); pointer-events: none; font-weight: 500; }
+        .link { stroke-opacity: 0.6; transition: all 0.2s; }
+        .link:hover { stroke-opacity: 1; stroke-width: 4px !important; }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <div id="graph-container">
+            <svg id="graph"></svg>
+            <div class="tooltip" id="tooltip"></div>
+
+            <div class="stats">
+                <div class="stats-title">Graph Stats</div>
+                <div class="stat-item">Nodes: <span class="stat-value">8</span></div>
+                <div class="stat-item">Edges: <span class="stat-value">22</span></div>
+                <div class="stat-item">Paths: <span class="stat-value">5</span></div>
+            </div>
+
+            <div class="legend">
+                <div class="legend-title">Node Types</div>
+                <div class="legend-item"><div class="legend-dot" style="background:#ff6b6b;"></div>User</div>
+                <div class="legend-item"><div class="legend-dot" style="background:#ffe66d;"></div>Group</div>
+                <div class="legend-item"><div class="legend-dot" style="background:#a29bfe;"></div>Domain</div>
+                <div class="legend-item"><div class="legend-dot" style="background:#ff4757;"></div>Target</div>
+            </div>
+
+            <div class="instructions">
+                Drag nodes | Scroll to zoom | Hover for details
+            </div>
+        </div>
+
+        <div id="sidebar">
+            <div class="sidebar-header">
+                <h2>攻击路径分析</h2>
+                <p>svc-alfresco → Domain Admins</p>
+            </div>
+
+            <div class="path-section">
+                <span class="path-number high">High | 3 步</span>
+                <div class="path-chain">
+<span class="node-badge user">svc-alfresco</span><span class="arrow-icon">→</span><span class="node-badge group">Service Accounts</span><span class="relation-badge ">组成员关系</span><br><span class="node-badge group">Service Accounts</span><span class="arrow-icon">→</span><span class="node-badge group">Privileged IT Accounts</span><span class="relation-badge ">组成员关系</span><br><span class="node-badge group">Privileged IT Accounts</span><span class="arrow-icon">→</span><span class="node-badge target">Domain Admins</span><span class="relation-badge high">通用写入 (GenericWrite)</span>
+                </div>
+                <div class="attack-steps">
+                    <div class="step-title">具体攻击步骤</div>
+
+                    <div class="step-item">
+                        <span class="step-num">1</span>
+                        <span class="step-text">确认 svc-alfresco 拥有 <code>GenericWrite</code> 权限到 Enterprise Admins 组</span>
+                    </div>
+                    <div class="step-item">
+                        <span class="step-num">2</span>
+                        <span class="step-text">使用 PowerView 或 AD Module 修改 ACL：<code>Add-ADGroupMember</code> 将自己添加到目标组</span>
+                    </div>
+
+                    <div class="step-item">
+                        <span class="step-num">3</span>
+                        <span class="step-text">直接利用 GenericAll 权限将自己添加到 Domain Admins</span>
+                    </div>
+
+                    <div class="step-item">
+                        <span class="step-num">!</span>
+                        <span class="step-text">成功加入 Domain Admins 后即可完全控制域控制器</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="path-section">
+                <span class="path-number high">High | 5 步</span>
+                <div class="path-chain">
+<span class="node-badge user">svc-alfresco</span><span class="arrow-icon">→</span><span class="node-badge group">Service Accounts</span><span class="relation-badge ">组成员关系</span><br><span class="node-badge group">Service Accounts</span><span class="arrow-icon">→</span><span class="node-badge group">Privileged IT Accounts</span><span class="relation-badge ">组成员关系</span><br><span class="node-badge group">Privileged IT Accounts</span><span class="arrow-icon">→</span><span class="node-badge target">Enterprise Admins</span><span class="relation-badge high">通用写入 (GenericWrite)</span><br><span class="node-badge group">Enterprise Admins</span><span class="arrow-icon">→</span><span class="node-badge target">Administrator</span><span class="relation-badge ">Contains</span><br><span class="node-badge user">Administrator</span><span class="arrow-icon">→</span><span class="node-badge target">Domain Admins</span><span class="relation-badge high">通用写入 (GenericWrite)</span>
+                </div>
+                <div class="attack-steps">
+                    <div class="step-title">具体攻击步骤</div>
+
+                    <div class="step-item">
+                        <span class="step-num">1</span>
+                        <span class="step-text">确认 svc-alfresco 拥有 <code>GenericWrite</code> 权限到 Enterprise Admins 组</span>
+                    </div>
+                    <div class="step-item">
+                        <span class="step-num">2</span>
+                        <span class="step-text">使用 PowerView 或 AD Module 修改 ACL：<code>Add-ADGroupMember</code> 将自己添加到目标组</span>
+                    </div>
+
+                    <div class="step-item">
+                        <span class="step-num">3</span>
+                        <span class="step-text">直接利用 GenericAll 权限将自己添加到 Domain Admins</span>
+                    </div>
+
+                    <div class="step-item">
+                        <span class="step-num">!</span>
+                        <span class="step-text">成功加入 Domain Admins 后即可完全控制域控制器</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="path-section">
+                <span class="path-number high">High | 5 步</span>
+                <div class="path-chain">
+<span class="node-badge user">svc-alfresco</span><span class="arrow-icon">→</span><span class="node-badge group">Service Accounts</span><span class="relation-badge ">组成员关系</span><br><span class="node-badge group">Service Accounts</span><span class="arrow-icon">→</span><span class="node-badge group">Privileged IT Accounts</span><span class="relation-badge ">组成员关系</span><br><span class="node-badge group">Privileged IT Accounts</span><span class="arrow-icon">→</span><span class="node-badge target">Enterprise Admins</span><span class="relation-badge high">通用写入 (GenericWrite)</span><br><span class="node-badge group">Enterprise Admins</span><span class="arrow-icon">→</span><span class="node-badge user">Denied RODC Password Replication Group</span><span class="relation-badge ">组成员关系</span><br><span class="node-badge user">Denied RODC Password Replication Group</span><span class="arrow-icon">→</span><span class="node-badge target">Domain Admins</span><span class="relation-badge high">完全控制 (GenericAll)</span>
+                </div>
+                <div class="attack-steps">
+                    <div class="step-title">具体攻击步骤</div>
+
+                    <div class="step-item">
+                        <span class="step-num">1</span>
+                        <span class="step-text">确认 svc-alfresco 拥有 <code>GenericWrite</code> 权限到 Enterprise Admins 组</span>
+                    </div>
+                    <div class="step-item">
+                        <span class="step-num">2</span>
+                        <span class="step-text">使用 PowerView 或 AD Module 修改 ACL：<code>Add-ADGroupMember</code> 将自己添加到目标组</span>
+                    </div>
+
+                    <div class="step-item">
+                        <span class="step-num">3</span>
+                        <span class="step-text">直接利用 GenericAll 权限将自己添加到 Domain Admins</span>
+                    </div>
+
+                    <div class="step-item">
+                        <span class="step-num">!</span>
+                        <span class="step-text">成功加入 Domain Admins 后即可完全控制域控制器</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="path-section">
+                <span class="path-number high">High | 4 步</span>
+                <div class="path-chain">
+<span class="node-badge user">svc-alfresco</span><span class="arrow-icon">→</span><span class="node-badge group">Service Accounts</span><span class="relation-badge ">组成员关系</span><br><span class="node-badge group">Service Accounts</span><span class="arrow-icon">→</span><span class="node-badge group">Privileged IT Accounts</span><span class="relation-badge ">组成员关系</span><br><span class="node-badge group">Privileged IT Accounts</span><span class="arrow-icon">→</span><span class="node-badge target">Enterprise Admins</span><span class="relation-badge high">通用写入 (GenericWrite)</span><br><span class="node-badge group">Enterprise Admins</span><span class="arrow-icon">→</span><span class="node-badge target">Domain Admins</span><span class="relation-badge high">通用写入 (GenericWrite)</span>
+                </div>
+                <div class="attack-steps">
+                    <div class="step-title">具体攻击步骤</div>
+
+                    <div class="step-item">
+                        <span class="step-num">1</span>
+                        <span class="step-text">确认 svc-alfresco 拥有 <code>GenericWrite</code> 权限到 Enterprise Admins 组</span>
+                    </div>
+                    <div class="step-item">
+                        <span class="step-num">2</span>
+                        <span class="step-text">使用 PowerView 或 AD Module 修改 ACL：<code>Add-ADGroupMember</code> 将自己添加到目标组</span>
+                    </div>
+
+                    <div class="step-item">
+                        <span class="step-num">3</span>
+                        <span class="step-text">直接利用 GenericAll 权限将自己添加到 Domain Admins</span>
+                    </div>
+
+                    <div class="step-item">
+                        <span class="step-num">!</span>
+                        <span class="step-text">成功加入 Domain Admins 后即可完全控制域控制器</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="path-section">
+                <span class="path-number high">High | 5 步</span>
+                <div class="path-chain">
+<span class="node-badge user">svc-alfresco</span><span class="arrow-icon">→</span><span class="node-badge group">Service Accounts</span><span class="relation-badge ">组成员关系</span><br><span class="node-badge group">Service Accounts</span><span class="arrow-icon">→</span><span class="node-badge group">Privileged IT Accounts</span><span class="relation-badge ">组成员关系</span><br><span class="node-badge group">Privileged IT Accounts</span><span class="arrow-icon">→</span><span class="node-badge target">Enterprise Admins</span><span class="relation-badge high">通用写入 (GenericWrite)</span><br><span class="node-badge group">Enterprise Admins</span><span class="arrow-icon">→</span><span class="node-badge target">FOREST</span><span class="relation-badge ">本地管理员</span><br><span class="node-badge domain">FOREST</span><span class="arrow-icon">→</span><span class="node-badge target">Domain Admins</span><span class="relation-badge high">完全控制 (GenericAll)</span>
+                </div>
+                <div class="attack-steps">
+                    <div class="step-title">具体攻击步骤</div>
+
+                    <div class="step-item">
+                        <span class="step-num">1</span>
+                        <span class="step-text">确认 svc-alfresco 拥有 <code>GenericWrite</code> 权限到 Enterprise Admins 组</span>
+                    </div>
+                    <div class="step-item">
+                        <span class="step-num">2</span>
+                        <span class="step-text">使用 PowerView 或 AD Module 修改 ACL：<code>Add-ADGroupMember</code> 将自己添加到目标组</span>
+                    </div>
+
+                    <div class="step-item">
+                        <span class="step-num">3</span>
+                        <span class="step-text">直接利用 GenericAll 权限将自己添加到 Domain Admins</span>
+                    </div>
+
+                    <div class="step-item">
+                        <span class="step-num">!</span>
+                        <span class="step-text">成功加入 Domain Admins 后即可完全控制域控制器</span>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+        const rawNodes = [{"id": "svc-alfresco", "label": "svc-alfresco", "type": "user"}, {"id": "Service Accounts", "label": "Service Accounts", "type": "group"}, {"id": "Privileged IT Accounts", "label": "Privileged IT Accounts", "type": "group"}, {"id": "Domain Admins", "label": "Domain Admins", "type": "domain"}, {"id": "Enterprise Admins", "label": "Enterprise Admins", "type": "group"}, {"id": "Administrator", "label": "Administrator", "type": "user"}, {"id": "Denied RODC Password Replication Group", "label": "Denied RODC Password Replication Group", "type": "user"}, {"id": "FOREST", "label": "FOREST", "type": "domain"}];
+        const rawEdges = [{"source": "svc-alfresco", "target": "Service Accounts", "label": "组成员关系"}, {"source": "Service Accounts", "target": "Privileged IT Accounts", "label": "组成员关系"}, {"source": "Privileged IT Accounts", "target": "Domain Admins", "label": "通用写入 (GenericWrite)"}, {"source": "svc-alfresco", "target": "Service Accounts", "label": "组成员关系"}, {"source": "Service Accounts", "target": "Privileged IT Accounts", "label": "组成员关系"}, {"source": "Privileged IT Accounts", "target": "Enterprise Admins", "label": "通用写入 (GenericWrite)"}, {"source": "Enterprise Admins", "target": "Administrator", "label": "Contains"}, {"source": "Administrator", "target": "Domain Admins", "label": "通用写入 (GenericWrite)"}, {"source": "svc-alfresco", "target": "Service Accounts", "label": "组成员关系"}, {"source": "Service Accounts", "target": "Privileged IT Accounts", "label": "组成员关系"}, {"source": "Privileged IT Accounts", "target": "Enterprise Admins", "label": "通用写入 (GenericWrite)"}, {"source": "Enterprise Admins", "target": "Denied RODC Password Replication Group", "label": "组成员关系"}, {"source": "Denied RODC Password Replication Group", "target": "Domain Admins", "label": "完全控制 (GenericAll)"}, {"source": "svc-alfresco", "target": "Service Accounts", "label": "组成员关系"}, {"source": "Service Accounts", "target": "Privileged IT Accounts", "label": "组成员关系"}, {"source": "Privileged IT Accounts", "target": "Enterprise Admins", "label": "通用写入 (GenericWrite)"}, {"source": "Enterprise Admins", "target": "Domain Admins", "label": "通用写入 (GenericWrite)"}, {"source": "svc-alfresco", "target": "Service Accounts", "label": "组成员关系"}, {"source": "Service Accounts", "target": "Privileged IT Accounts", "label": "组成员关系"}, {"source": "Privileged IT Accounts", "target": "Enterprise Admins", "label": "通用写入 (GenericWrite)"}, {"source": "Enterprise Admins", "target": "FOREST", "label": "本地管理员"}, {"source": "FOREST", "target": "Domain Admins", "label": "完全控制 (GenericAll)"}];
+
+        const nodes = rawNodes.map((n, i) => ({
+            ...n,
+            x: 150 + (i % 3) * 200,
+            y: 120 + Math.floor(i / 3) * 160
+        }));
+
+        const links = rawEdges.map(e => ({
+            source: nodes.find(n => n.id === e.source) || e.source,
+            target: nodes.find(n => n.id === e.target) || e.target,
+            label: e.label
+        }));
+
+        const svg = d3.select('#graph');
+        const container = document.getElementById('graph-container');
+        const width = container.clientWidth;
+        const height = container.clientHeight;
+
+        const g = svg.append('g');
+
+        const zoom = d3.zoom()
+            .scaleExtent([0.3, 3])
+            .on('zoom', e => g.attr('transform', e.transform));
+        svg.call(zoom);
+
+        const simulation = d3.forceSimulation(nodes)
+            .force('link', d3.forceLink(links).id(d => d.id).distance(140))
+            .force('charge', d3.forceManyBody().strength(-500))
+            .force('center', d3.forceCenter(width / 2, height / 2))
+            .force('collision', d3.forceCollide().radius(80));
+
+        const link = g.append('g')
+            .selectAll('line')
+            .data(links)
+            .join('line')
+            .attr('class', 'link')
+            .attr('stroke', d => {
+                const rel = (d.label || '').toLowerCase();
+                if (rel.includes('generic') || rel.includes('all') || rel.includes('shadow') || rel.includes('key')) return '#ff4757';
+                if (rel.includes('write')) return '#ffa502';
+                if (rel.includes('member')) return '#74b9ff';
+                return '#555';
+            })
+            .attr('stroke-width', d => {
+                const rel = (d.label || '').toLowerCase();
+                if (rel.includes('generic') || rel.includes('all')) return 4;
+                return 2;
+            });
+
+        const node = g.append('g')
+            .selectAll('g')
+            .data(nodes)
+            .join('g')
+            .attr('class', 'node');
+
+        node.append('circle')
+            .attr('r', 32)
+            .attr('fill', d => {
+                if (d.type === 'target' || d.id === 'Domain Admins' || d.id === 'Administrators' || d.id === 'Enterprise Admins') return '#ff4757';
+                if (d.type === 'group' || d.id.includes('Admins') || d.id.includes('Accounts')) return '#ffe66d';
+                if (d.type === 'domain' || d.id === 'FOREST') return '#a29bfe';
+                return '#ff6b6b';
+            })
+            .attr('stroke', '#fff')
+            .attr('stroke-width', 2);
+
+        node.append('text')
+            .attr('dy', 48)
+            .text(d => d.label.length > 14 ? d.label.substring(0, 14) : d.label);
+
+        const drag = d3.drag()
+            .on('start', e => {
+                if (!e.active) simulation.alphaTarget(0.3).restart();
+                e.subject.fx = e.subject.x;
+                e.subject.fy = e.subject.y;
+            })
+            .on('drag', e => {
+                e.subject.fx = e.x;
+                e.subject.fy = e.y;
+            })
+            .on('end', e => {
+                if (!e.active) simulation.alphaTarget(0);
+                e.subject.fx = null;
+                e.subject.fy = null;
+            });
+        node.call(drag);
+
+        const tooltip = d3.select('#tooltip');
+        node.on('mouseover', (e, d) => {
+            tooltip.classed('visible', true)
+                .html('<div class="tooltip-title">' + d.label + '</div><div class="tooltip-type">Type: ' + d.type + '</div>');
+        })
+        .on('mousemove', e => {
+            tooltip.style('left', (e.pageX + 15) + 'px').style('top', (e.pageY - 15) + 'px');
+        })
+        .on('mouseout', () => tooltip.classed('visible', false));
+
+        simulation.on('tick', () => {
+            link
+                .attr('x1', d => d.source.x)
+                .attr('y1', d => d.source.y)
+                .attr('x2', d => d.target.x)
+                .attr('y2', d => d.target.y);
+            node.attr('transform', d => 'translate(' + d.x + ',' + d.y + ')');
+        });
+
+        svg.call(zoom.transform, d3.zoomIdentity.translate(width/2 - 350, height/2 - 200));
+    </script>
+</body>
+</html>
