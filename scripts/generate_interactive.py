@@ -1,0 +1,248 @@
+import sys
+import json
+import codecs
+
+with open('top5_paths.json', 'r', encoding='utf-8') as f:
+    paths = json.load(f)
+
+# Collect all rawNodes and rawEdges
+rawNodes_map = {}
+for p in paths:
+    for step in p['path']:
+        for n in [step['from'], step['to']]:
+            if n not in rawNodes_map:
+                typ = 'user'
+                if 'Admins' in n or 'Accounts' in n or 'Group' in n: typ = 'group'
+                elif 'FOREST' in n or '.' in n: typ = 'domain'
+                if n == 'Domain Admins' or n == 'Enterprise Admins' or n == 'Administrator': typ = 'target'
+                rawNodes_map[n] = {'id': n, 'label': n, 'type': typ}
+
+rawNodes = list(rawNodes_map.values())
+rawEdges = []
+path_sections = ''
+
+def get_technique(relation):
+    r = relation.lower()
+    if 'write' in r:
+        return "目标对象的 GenericWrite 权限：可通过修改属性或组成员配置攻击（例如使用 PowerView: Add-ADGroupMember 或 Set-DomainObject）。"
+    if 'all' in r or 'owns' in r:
+        return "拥有目标对象的完全控制权 (GenericAll)：可以直接接管、重置密码或者加入自己为管理员。"
+    if 'session' in r:
+        return "拥有对应会话：可通过接管主机（如窃取凭证或内存中的票据）进行横向移动。"
+    if 'member' in r or '包含' in r or '组成员' in r or 'contains' in r:
+        return "继承组成员或层次结构权限：自动具备了目标安全上下文。"
+    if 'shadow' in r or 'keycredential' in r:
+        return "利用 Shadow Credentials 进行攻击（如使用 Whisker 添加凭证即可伪造身份）。"
+    return "关联权限：可利用此关联实现相应操作。"
+
+for i, p in enumerate(paths):
+    chain_html = ''
+    steps_html = '<div class="step-title">具体攻击步骤 (BloodHound 分析结果)</div>\n'
+    
+    # Collect edges
+    for idx, step in enumerate(p['path']):
+        rawEdges.append({'source': step['from'], 'target': step['to'], 'label': step['relation']})
+        
+        # UI chain
+        t1 = rawNodes_map[step['from']]['type']
+        t2 = rawNodes_map[step['to']]['type']
+        rel_class = 'high' if 'Write' in step['relation'] or 'All' in step['relation'] else ''
+        
+        if idx == 0:
+            chain_html += f'<span class="node-badge {t1}">{step["from"]}</span>'
+        
+        chain_html += f'<span class="arrow-icon">→</span><span class="node-badge {t2}">{step["to"]}</span>'
+        chain_html += f'<span class="relation-badge {rel_class}">{step["relation"]}</span>'
+        if idx < len(p['path']) - 1:
+            chain_html += '<br>'
+            
+        steps_html += f'''
+        <div class="step-item">
+            <span class="step-num">{idx+1}</span>
+            <span class="step-text">{get_technique(step['relation'])} ({step['from']} -> {step['to']})</span>
+        </div>'''
+        
+    steps_html += '''
+        <div class="step-item">
+            <span class="step-num">!</span>
+            <span class="step-text">成功抵达 Domain Admins，即可完全控制整个 Active Directory 域环境。</span>
+        </div>'''
+
+    path_sections += f'''
+    <div class="path-section">
+        <span class="path-number {"high" if p["risk_level"]=="High" else "medium"}">{p["risk_level"]} | {p["steps"]} 步</span>
+        <div class="path-chain">
+            {chain_html}
+        </div>
+        <div class="attack-steps">
+            {steps_html}
+        </div>
+    </div>
+    '''
+
+template = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Attack Path - Interactive (Fixed)</title>
+    <script src="d3.min.js"></script>
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{ font-family: 'Microsoft YaHei', 'Segoe UI', Arial, sans-serif; background: #0a0e17; color: #e0e0e0; overflow: hidden; }}
+        #container {{ display: flex; width: 100vw; height: 100vh; }}
+        #graph-container {{ flex: 1; position: relative; background: linear-gradient(135deg, #0f1419 0%, #1a1f2e 50%, #0d1117 100%); }}
+        #graph {{ width: 100%; height: 100%; }}
+        #sidebar {{ width: 480px; background: linear-gradient(180deg, #151b26 0%, #0d1117 100%); border-left: 1px solid #00ff88; overflow-y: auto; padding: 0; }}
+        .sidebar-header {{ background: linear-gradient(135deg, #00ff88 0%, #00cc6a 100%); padding: 20px; color: #0a0e17; }}
+        .sidebar-header h2 {{ font-size: 18px; margin-bottom: 5px; }}
+        .sidebar-header p {{ font-size: 12px; opacity: 0.8; }}
+        .path-section {{ padding: 15px 20px; border-bottom: 1px solid #1e2836; }}
+        .path-section:hover {{ background: rgba(0, 255, 136, 0.05); }}
+        .path-number {{ display: inline-block; background: #ff4757; color: #fff; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: bold; margin-bottom: 10px; }}
+        .path-number.medium {{ background: #ffa502; }}
+        .path-number.low {{ background: #2ed573; }}
+        .path-chain {{ display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 10px 0; line-height: 1.8; }}
+        .node-badge {{ padding: 6px 12px; border-radius: 6px; font-size: 11px; font-weight: 500; white-space: nowrap; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }}
+        .node-badge.user {{ background: linear-gradient(135deg, #ff6b6b, #ee5a5a); color: #fff; }}
+        .node-badge.group {{ background: linear-gradient(135deg, #ffe66d, #ffd93d); color: #1a1a2e; }}
+        .node-badge.domain {{ background: linear-gradient(135deg, #a29bfe, #8b80ff); color: #fff; }}
+        .node-badge.target {{ background: linear-gradient(135deg, #ff4757, #ff3344); color: #fff; box-shadow: 0 0 15px rgba(255,71,87,0.4); }}
+        .arrow-icon {{ color: #00ff88; font-size: 14px; font-weight: bold; }}
+        .relation-badge {{ background: rgba(255,255,255,0.1); padding: 4px 8px; border-radius: 4px; font-size: 9px; color: #888; border: 1px solid #333; }}
+        .relation-badge.high {{ border-color: #ff4757; color: #ff4757; box-shadow: inset 0 0 5px rgba(255,71,87,0.2); }}
+        .relation-badge.medium {{ border-color: #ffa502; color: #ffa502; }}
+        .attack-steps {{ margin-top: 12px; padding: 12px; background: rgba(0,0,0,0.3); border-radius: 8px; border-left: 3px solid #00ff88; }}
+        .step-title {{ color: #00ff88; font-size: 12px; font-weight: bold; margin-bottom: 8px; }}
+        .step-item {{ display: flex; align-items: flex-start; margin: 8px 0; font-size: 12px; line-height: 1.5; }}
+        .step-num {{ display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; background: #00ff88; color: #0a0e17; border-radius: 50%; font-size: 11px; font-weight: bold; margin-right: 10px; flex-shrink: 0; }}
+        .step-text {{ color: #ccc; }}
+        .step-text code {{ background: rgba(0,255,136,0.15); color: #00ff88; padding: 2px 6px; border-radius: 3px; font-size: 11px; }}
+        .legend, .stats {{ position: absolute; left: 20px; background: rgba(21, 27, 38, 0.95); border: 1px solid #333; border-radius: 12px; padding: 15px; z-index: 50; }}
+        .legend {{ bottom: 20px; }}
+        .stats {{ top: 20px; padding: 15px 20px; }}
+        .legend-title, .stats-title {{ color: #00ff88; margin-bottom: 12px; font-weight: bold; font-size: 13px; }}
+        .legend-item {{ display: flex; align-items: center; margin: 6px 0; font-size: 11px; }}
+        .legend-dot {{ width: 14px; height: 14px; border-radius: 50%; margin-right: 10px; }}
+        .stat-item {{ margin: 4px 0; font-size: 12px; }}
+        .stat-value {{ color: #00ff88; font-weight: bold; }}
+        .tooltip {{ position: absolute; background: rgba(21, 27, 38, 0.98); border: 2px solid #00ff88; border-radius: 8px; padding: 10px 14px; font-size: 12px; pointer-events: none; opacity: 0; transition: opacity 0.2s; z-index: 200; max-width: 200px; }}
+        .tooltip.visible {{ opacity: 1; }}
+        .tooltip-title {{ color: #00ff88; font-weight: bold; }}
+        .tooltip-type {{ color: #888; font-size: 11px; margin-top: 3px; }}
+        .instructions {{ position: absolute; bottom: 20px; right: 500px; background: rgba(21, 27, 38, 0.9); border: 1px solid #333; border-radius: 8px; padding: 10px 15px; font-size: 11px; color: #666; }}
+        /* D3 Graph Styles */
+        .node circle {{ cursor: grab; transition: all 0.2s; }}
+        .node circle:active {{ cursor: grabbing; }}
+        .node:hover circle {{ filter: brightness(1.3); stroke-width: 4px !important; }}
+        .node text {{ font-size: 11px; fill: #fff; text-anchor: middle; text-shadow: 0 1px 4px rgba(0,0,0,0.9); pointer-events: none; font-weight: 500; }}
+        .link {{ stroke-opacity: 0.6; transition: all 0.2s; }}
+        .link:hover {{ stroke-opacity: 1; stroke-width: 4px !important; }}
+    </style>
+</head>
+<body>
+    <div id="container">
+        <div id="graph-container">
+            <svg id="graph"></svg>
+            <div class="tooltip" id="tooltip"></div>
+            <div class="stats">
+                <div class="stats-title">真实攻击路径推演 (基于当前库)</div>
+                <div class="stat-item">唯一节点: <span class="stat-value">{len(rawNodes)}</span></div>
+                <div class="stat-item">特权边数: <span class="stat-value">{len(rawEdges)}</span></div>
+            </div>
+            <div class="legend">
+                <div class="legend-title">Node Types</div>
+                <div class="legend-item"><div class="legend-dot" style="background:#ff6b6b;"></div>User</div>
+                <div class="legend-item"><div class="legend-dot" style="background:#ffe66d;"></div>Group</div>
+                <div class="legend-item"><div class="legend-dot" style="background:#a29bfe;"></div>Domain</div>
+                <div class="legend-item"><div class="legend-dot" style="background:#ff4757;"></div>Target</div>
+            </div>
+            <div class="instructions">
+                拖动节点 | 滚轮缩放 | 悬停查看详情
+            </div>
+        </div>
+        <div id="sidebar">
+            <div class="sidebar-header">
+                <h2>全景攻击路径分析 - 真实推演结果</h2>
+                <p>svc-alfresco → Domain Admins (Shortest Paths)</p>
+            </div>
+            {path_sections}
+        </div>
+    </div>
+    <script>
+        const rawNodes = {json.dumps(rawNodes)};
+        const rawEdges = {json.dumps(rawEdges)};
+        
+        const nodes = rawNodes.map((n, i) => ({{ ...n, x: 150 + (i % 3) * 200, y: 120 + Math.floor(i / 3) * 160 }}));
+        const links = rawEdges.map(e => ({{
+            source: nodes.find(n => n.id === e.source) || e.source,
+            target: nodes.find(n => n.id === e.target) || e.target,
+            label: e.label
+        }}));
+
+        const svg = d3.select('#graph');
+        const container = document.getElementById('graph-container');
+        const width = container.clientWidth;
+        const height = container.clientHeight;
+        const g = svg.append('g');
+        const zoom = d3.zoom().scaleExtent([0.3, 3]).on('zoom', e => g.attr('transform', e.transform));
+        svg.call(zoom);
+
+        const simulation = d3.forceSimulation(nodes)
+            .force('link', d3.forceLink(links).id(d => d.id).distance(140))
+            .force('charge', d3.forceManyBody().strength(-500))
+            .force('center', d3.forceCenter(width / 2, height / 2))
+            .force('collision', d3.forceCollide().radius(80));
+
+        const link = g.append('g').selectAll('line').data(links).join('line')
+            .attr('class', 'link')
+            .attr('stroke', d => {{
+                const rel = (d.label || '').toLowerCase();
+                if (rel.includes('generic') || rel.includes('all') || rel.includes('session')) return '#ff4757';
+                if (rel.includes('write')) return '#ffa502';
+                return '#74b9ff';
+            }})
+            .attr('stroke-width', d => {{
+                const rel = (d.label || '').toLowerCase();
+                if (rel.includes('generic') || rel.includes('all') || rel.includes('session')) return 4;
+                return 2;
+            }});
+
+        const node = g.append('g').selectAll('g').data(nodes).join('g').attr('class', 'node');
+        node.append('circle').attr('r', 32)
+            .attr('fill', d => {{
+                if (d.type === 'target') return '#ff4757';
+                if (d.type === 'group') return '#ffe66d';
+                if (d.type === 'domain') return '#a29bfe';
+                return '#ff6b6b';
+            }})
+            .attr('stroke', '#fff').attr('stroke-width', 2);
+
+        node.append('text').attr('dy', 48).text(d => d.label.length > 14 ? d.label.substring(0, 14) : d.label);
+
+        const drag = d3.drag()
+            .on('start', e => {{ if (!e.active) simulation.alphaTarget(0.3).restart(); e.subject.fx = e.subject.x; e.subject.fy = e.subject.y; }})
+            .on('drag', e => {{ e.subject.fx = e.x; e.subject.fy = e.y; }})
+            .on('end', e => {{ if (!e.active) simulation.alphaTarget(0); e.subject.fx = null; e.subject.fy = null; }});
+        node.call(drag);
+
+        const tooltip = d3.select('#tooltip');
+        node.on('mouseover', (e, d) => {{
+            tooltip.classed('visible', true).html('<div class="tooltip-title">' + d.label + '</div><div class="tooltip-type">Type: ' + d.type + '</div>');
+        }}).on('mousemove', e => tooltip.style('left', (e.pageX + 15) + 'px').style('top', (e.pageY - 15) + 'px'))
+        .on('mouseout', () => tooltip.classed('visible', false));
+
+        simulation.on('tick', () => {{
+            link.attr('x1', d => d.source.x).attr('y1', d => d.source.y).attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+            node.attr('transform', d => 'translate(' + d.x + ',' + d.y + ')');
+        }});
+        // Center view
+        svg.call(zoom.transform, d3.zoomIdentity.translate(width/2 - 250, height/2 - 200));
+    </script>
+</body>
+</html>
+"""
+
+with codecs.open('svc-alfresco-attack-paths.html', 'w', encoding='utf-8') as f:
+    f.write(template)
+
+print("生成真实动态图成功! => svc-alfresco-attack-paths.html")
