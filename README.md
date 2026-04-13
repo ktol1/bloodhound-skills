@@ -79,11 +79,17 @@ python scripts/analyze.py C:\data\BloodHoundData user svc-alfresco
 # 查找攻击路径
 python scripts/analyze.py C:\data\BloodHoundData path svc-alfresco "Domain Admins"
 
+# 任意两点详细路径分析
+python scripts/analyze.py C:\data\BloodHoundData pathx "<SOURCE>" "<TARGET>" 5
+
+# 生成供 AI 持续推进的结构化交接包
+python scripts/analyze.py C:\data\BloodHoundData agentpath "<SOURCE>" "<TARGET>" 5
+
 # 发现特权账户
 python scripts/analyze.py C:\data\BloodHoundData privileged
 
-# 生成可视化
-python scripts/analyze.py C:\data\BloodHoundData visualize
+# 生成仅展示 source->target 的路径专用可视化
+python scripts/analyze.py C:\data\BloodHoundData visualize "<SOURCE>" "<TARGET>" 5
 ```
 
 ---
@@ -160,19 +166,22 @@ svc-alfresco (ASREP Roastable)
 
 ## 🎨 效果预览
 
-### HTB 真实 AD 域环境实测 - 动态全景攻击链路 (Demo)
+### 最新路径专用可视化（Source -> Target）
 
-基于 `svc-alfresco -> Domain Admins` 的真实靶场路径推演。**点击下方链接即可在浏览器中体验完整交互效果（D3.js 渲染，可自由拖拽、缩放及悬浮查看风险详情）**：
-
-:point_right: **👉 [在线查看交互式攻击全景推演报告 (HTML Demo)](https://htmlpreview.github.io/?https://github.com/ktol1/bloodhound-analyzer/blob/main/svc-alfresco-attack-paths.html)** :point_left:
+下图为最新界面：左侧仅展示源到目标的路径节点，右侧展示步骤化分析（图谱证据、利用思路、执行路径、验证标准），适合 Agent 与人工协同研判。
 
 <div align="center">
-  <br>
-  👉 <a href="https://htmlpreview.github.io/?https://github.com/ktol1/bloodhound-analyzer/blob/main/svc-alfresco-attack-paths.html"><b>点击体验实时可交互图形及攻击原理侧边栏</b></a> 👈
-  <br><br>
+  <img src="screenshots/path_focus_latest.png" alt="Path Focus Latest UI" width="960"/>
 </div>
 
-*你也可以直接下载项目中的 [`svc-alfresco-attack-paths.html`](./svc-alfresco-attack-paths.html) 并在本地浏览器打开，无需服务器支持，直接拥有动态推演界面。*
+👉 在线体验示例页面：
+[Path Explorer Demo](https://htmlpreview.github.io/?https://github.com/ktol1/bloodhound-analyzer/blob/main/attack_paths.html)
+
+*你也可以直接运行命令生成自己的路径页面：*
+
+```bash
+python scripts/analyze.py BloodHoundData visualize "<SOURCE>" "<TARGET>" 5
+```
 ---
 
 ## 📁 项目结构

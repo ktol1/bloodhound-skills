@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Path Explorer - svc-alfresco -> Domain Admins</title>
+    <script src="d3.min.js"></script>
+    <style>
+        :root {
+            --bg0:#090d16; --bg1:#111a29; --panel:rgba(14,22,36,.94);
+            --border:#2b3d5d; --text:#e8f1ff; --muted:#93a8cb;
+            --accent:#2be6a4; --danger:#ff677f; --warn:#ffc46b;
+        }
+        * { box-sizing: border-box; margin:0; padding:0; }
+        body {
+            font-family:'Microsoft YaHei','Segoe UI',sans-serif;
+            background:
+              radial-gradient(1200px 500px at 10% -10%, #243e6a 0%, transparent 45%),
+              radial-gradient(900px 600px at 100% 0%, #3b1a56 0%, transparent 45%),
+              linear-gradient(135deg,var(--bg0),var(--bg1));
+            color:var(--text);
+            height:100vh;
+            overflow:hidden;
+        }
+        .layout { display:grid; grid-template-columns: 1.15fr 0.85fr; height:100vh; gap:12px; padding:12px; }
+        .panel { background:var(--panel); border:1px solid var(--border); border-radius:12px; box-shadow:0 10px 28px rgba(0,0,0,.35); }
+        .left { position:relative; overflow:hidden; }
+        .right { padding:12px; overflow:auto; }
+        .head { padding:12px 14px; border-bottom:1px solid #2a3c5b; }
+        .title { font-size:18px; color:#d9ffe9; }
+        .sub { font-size:12px; color:var(--muted); margin-top:4px; }
+        .toolbar { display:flex; gap:8px; align-items:center; margin-top:10px; flex-wrap:wrap; }
+        .pill { border:1px solid #2d456b; color:#add3ff; border-radius:999px; padding:4px 9px; font-size:11px; }
+        .select {
+            background:#0d1628; color:#e3eeff; border:1px solid #35507b;
+            border-radius:8px; padding:7px 9px; font-size:12px; min-width:220px;
+        }
+        #graph { width:100%; height:calc(100% - 112px); display:block; }
+        .node circle { stroke:#ecf4ff; stroke-width:1.8px; }
+        .node text { fill:#eff6ff; font-size:11px; text-anchor:middle; pointer-events:none; text-shadow:0 1px 3px rgba(0,0,0,.9); }
+        .link { stroke:#6f83a6; stroke-width:2px; stroke-opacity:.6; marker-end:url(#arrow); }
+        .link.high { stroke:var(--danger); stroke-width:2.8px; }
+        .link.medium { stroke:var(--warn); stroke-width:2.4px; }
+        .link-label { fill:#9cb2d9; font-size:10px; text-anchor:middle; pointer-events:none; }
+        .summary { margin-bottom:12px; padding:10px; border:1px solid #2d4369; border-radius:10px; background:rgba(11,18,30,.9); }
+        .risk { color:#ffd89b; font-weight:700; }
+        .step-card { margin-bottom:10px; padding:10px; border:1px solid #2b4168; border-radius:10px; background:rgba(10,17,29,.92); }
+        .step-h { font-size:12px; color:#e8f3ff; margin-bottom:4px; }
+        .step-r { font-size:11px; color:#8af4c8; margin-bottom:6px; }
+        .k { color:#a4d9ff; font-size:11px; margin-top:5px; }
+        .v { color:#cedbf7; font-size:11px; line-height:1.45; }
+        ul.v { margin-left:16px; }
+        @media (max-width: 1100px) { .layout { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+    <div class="layout">
+        <div class="left panel">
+            <div class="head">
+                <div class="title">Path Explorer - svc-alfresco -> Domain Admins</div>
+                <div class="sub">仅展示源到目标路径节点 | Source: <b id="src"></b> -> Target: <b id="dst"></b></div>
+                <div class="toolbar">
+                    <span class="pill" id="count-pill"></span>
+                    <select id="path-select" class="select"></select>
+                </div>
+            </div>
+            <svg id="graph"></svg>
+        </div>
+
+        <div class="right panel">
+            <div id="summary" class="summary"></div>
+            <div id="steps"></div>
+        </div>
+    </div>
+
+    <script>
+        const sourceName = "svc-alfresco";
+        const targetName = "Domain Admins";
+        const paths = [{"id": 1, "risk_level": "High", "difficulty": "中", "summary": "需要通过 2 个组成员关系逐步提升权限。", "attack_methods": ["组成员关系", "通用写入 (GenericWrite)"], "steps": [{"step": 1, "from": "svc-alfresco", "to": "Service Accounts", "relation": "组成员关系", "description": "是 Service Accounts 的成员"}, {"step": 2, "from": "Service Accounts", "to": "Privileged IT Accounts", "relation": "组成员关系", "description": "是 Privileged IT Accounts 的成员"}, {"step": 3, "from": "Privileged IT Accounts", "to": "Domain Admins", "relation": "通用写入 (GenericWrite)", "description": "拥有 GenericWrite 权限"}], "penetration_plan": [{"step": "1", "from": "svc-alfresco", "to": "Service Accounts", "relation": "组成员关系", "idea": "利用组嵌套放大权限，先梳理组边界与继承路径，再决定提权分支。", "action": "枚举目标组的 ACL、成员结构和可达高价值对象，选择最短且噪声最低分支。", "verify": "验证组成员变更是否生效，以及是否新增关键权限边。"}, {"step": "2", "from": "Service Accounts", "to": "Privileged IT Accounts", "relation": "组成员关系", "idea": "利用组嵌套放大权限，先梳理组边界与继承路径，再决定提权分支。", "action": "枚举目标组的 ACL、成员结构和可达高价值对象，选择最短且噪声最低分支。", "verify": "验证组成员变更是否生效，以及是否新增关键权限边。"}, {"step": "3", "from": "Privileged IT Accounts", "to": "Domain Admins", "relation": "通用写入 (GenericWrite)", "idea": "先做最小化权限验证（读取对象 ACL 与关键属性），确认可写后再执行最小改动提权，避免一次性高噪声动作。", "action": "优先选择低噪声改动：组成员属性、可控委派或最小 ACL 变更；保留回滚路径。", "verify": "验证对象属性变化是否成功、生效范围是否可控，以及是否获得下一跳访问能力。"}]}, {"id": 2, "risk_level": "High", "difficulty": "未知", "summary": "需要通过 2 个组成员关系逐步提升权限。", "attack_methods": ["组成员关系", "通用写入 (GenericWrite)", "Contains"], "steps": [{"step": 1, "from": "svc-alfresco", "to": "Service Accounts", "relation": "组成员关系", "description": "是 Service Accounts 的成员"}, {"step": 2, "from": "Service Accounts", "to": "Privileged IT Accounts", "relation": "组成员关系", "description": "是 Privileged IT Accounts 的成员"}, {"step": 3, "from": "Privileged IT Accounts", "to": "Enterprise Admins", "relation": "通用写入 (GenericWrite)", "description": "拥有 GenericWrite 权限"}, {"step": 4, "from": "Enterprise Admins", "to": "Administrator", "relation": "Contains", "description": "Enterprise Admins 包含成员"}, {"step": 5, "from": "Administrator", "to": "Domain Admins", "relation": "通用写入 (GenericWrite)", "description": "拥有 GenericWrite 权限 (Domain Admins@HTB.LOCAL)"}], "penetration_plan": [{"step": "1", "from": "svc-alfresco", "to": "Service Accounts", "relation": "组成员关系", "idea": "利用组嵌套放大权限，先梳理组边界与继承路径，再决定提权分支。", "action": "枚举目标组的 ACL、成员结构和可达高价值对象，选择最短且噪声最低分支。", "verify": "验证组成员变更是否生效，以及是否新增关键权限边。"}, {"step": "2", "from": "Service Accounts", "to": "Privileged IT Accounts", "relation": "组成员关系", "idea": "利用组嵌套放大权限，先梳理组边界与继承路径，再决定提权分支。", "action": "枚举目标组的 ACL、成员结构和可达高价值对象，选择最短且噪声最低分支。", "verify": "验证组成员变更是否生效，以及是否新增关键权限边。"}, {"step": "3", "from": "Privileged IT Accounts", "to": "Enterprise Admins", "relation": "通用写入 (GenericWrite)", "idea": "先做最小化权限验证（读取对象 ACL 与关键属性），确认可写后再执行最小改动提权，避免一次性高噪声动作。", "action": "优先选择低噪声改动：组成员属性、可控委派或最小 ACL 变更；保留回滚路径。", "verify": "验证对象属性变化是否成功、生效范围是否可控，以及是否获得下一跳访问能力。"}, {"step": "4", "from": "Enterprise Admins", "to": "Administrator", "relation": "Contains", "idea": "利用组嵌套放大权限，先梳理组边界与继承路径，再决定提权分支。", "action": "枚举目标组的 ACL、成员结构和可达高价值对象，选择最短且噪声最低分支。", "verify": "验证组成员变更是否生效，以及是否新增关键权限边。"}, {"step": "5", "from": "Administrator", "to": "Domain Admins", "relation": "通用写入 (GenericWrite)", "idea": "先做最小化权限验证（读取对象 ACL 与关键属性），确认可写后再执行最小改动提权，避免一次性高噪声动作。", "action": "优先选择低噪声改动：组成员属性、可控委派或最小 ACL 变更；保留回滚路径。", "verify": "验证对象属性变化是否成功、生效范围是否可控，以及是否获得下一跳访问能力。"}]}, {"id": 3, "risk_level": "High", "difficulty": "中", "summary": "需要通过 3 个组成员关系逐步提升权限。", "attack_methods": ["组成员关系", "通用写入 (GenericWrite)", "完全控制 (GenericAll)"], "steps": [{"step": 1, "from": "svc-alfresco", "to": "Service Accounts", "relation": "组成员关系", "description": "是 Service Accounts 的成员"}, {"step": 2, "from": "Service Accounts", "to": "Privileged IT Accounts", "relation": "组成员关系", "description": "是 Privileged IT Accounts 的成员"}, {"step": 3, "from": "Privileged IT Accounts", "to": "Enterprise Admins", "relation": "通用写入 (GenericWrite)", "description": "拥有 GenericWrite 权限"}, {"step": 4, "from": "Enterprise Admins", "to": "Denied RODC Password Replication Group", "relation": "组成员关系", "description": "是 Denied RODC Password Replication Group 的成员"}, {"step": 5, "from": "Denied RODC Password Replication Group", "to": "Domain Admins", "relation": "完全控制 (GenericAll)", "description": "拥有 GenericAll 权限"}], "penetration_plan": [{"step": "1", "from": "svc-alfresco", "to": "Service Accounts", "relation": "组成员关系", "idea": "利用组嵌套放大权限，先梳理组边界与继承路径，再决定提权分支。", "action": "枚举目标组的 ACL、成员结构和可达高价值对象，选择最短且噪声最低分支。", "verify": "验证组成员变更是否生效，以及是否新增关键权限边。"}, {"step": "2", "from": "Service Accounts", "to": "Privileged IT Accounts", "relation": "组成员关系", "idea": "利用组嵌套放大权限，先梳理组边界与继承路径，再决定提权分支。", "action": "枚举目标组的 ACL、成员结构和可达高价值对象，选择最短且噪声最低分支。", "verify": "验证组成员变更是否生效，以及是否新增关键权限边。"}, {"step": "3", "from": "Privileged IT Accounts", "to": "Enterprise Admins", "relation": "通用写入 (GenericWrite)", "idea": "先做最小化权限验证（读取对象 ACL 与关键属性），确认可写后再执行最小改动提权，避免一次性高噪声动作。", "action": "优先选择低噪声改动：组成员属性、可控委派或最小 ACL 变更；保留回滚路径。", "verify": "验证对象属性变化是否成功、生效范围是否可控，以及是否获得下一跳访问能力。"}, {"step": "4", "from": "Enterprise Admins", "to": "Denied RODC Password Replication Group", "relation": "组成员关系", "idea": "利用组嵌套放大权限，先梳理组边界与继承路径，再决定提权分支。", "action": "枚举目标组的 ACL、成员结构和可达高价值对象，选择最短且噪声最低分支。", "verify": "验证组成员变更是否生效，以及是否新增关键权限边。"}, {"step": "5", "from": "Denied RODC Password Replication Group", "to": "Domain Admins", "relation": "完全控制 (GenericAll)", "idea": "当前具备高控制权，建议先建立低可见度持久化，再推进到下一个高价值节点。", "action": "采用分阶段接管：权限接管 -> 凭据/令牌获取 -> 横向移动。", "verify": "验证目标对象控制权是否稳定，且后续链路可达。"}]}, {"id": 4, "risk_level": "High", "difficulty": "中", "summary": "需要通过 2 个组成员关系逐步提升权限。", "attack_methods": ["组成员关系", "通用写入 (GenericWrite)"], "steps": [{"step": 1, "from": "svc-alfresco", "to": "Service Accounts", "relation": "组成员关系", "description": "是 Service Accounts 的成员"}, {"step": 2, "from": "Service Accounts", "to": "Privileged IT Accounts", "relation": "组成员关系", "description": "是 Privileged IT Accounts 的成员"}, {"step": 3, "from": "Privileged IT Accounts", "to": "Enterprise Admins", "relation": "通用写入 (GenericWrite)", "description": "拥有 GenericWrite 权限"}, {"step": 4, "from": "Enterprise Admins", "to": "Domain Admins", "relation": "通用写入 (GenericWrite)", "description": "拥有 GenericWrite 权限"}], "penetration_plan": [{"step": "1", "from": "svc-alfresco", "to": "Service Accounts", "relation": "组成员关系", "idea": "利用组嵌套放大权限，先梳理组边界与继承路径，再决定提权分支。", "action": "枚举目标组的 ACL、成员结构和可达高价值对象，选择最短且噪声最低分支。", "verify": "验证组成员变更是否生效，以及是否新增关键权限边。"}, {"step": "2", "from": "Service Accounts", "to": "Privileged IT Accounts", "relation": "组成员关系", "idea": "利用组嵌套放大权限，先梳理组边界与继承路径，再决定提权分支。", "action": "枚举目标组的 ACL、成员结构和可达高价值对象，选择最短且噪声最低分支。", "verify": "验证组成员变更是否生效，以及是否新增关键权限边。"}, {"step": "3", "from": "Privileged IT Accounts", "to": "Enterprise Admins", "relation": "通用写入 (GenericWrite)", "idea": "先做最小化权限验证（读取对象 ACL 与关键属性），确认可写后再执行最小改动提权，避免一次性高噪声动作。", "action": "优先选择低噪声改动：组成员属性、可控委派或最小 ACL 变更；保留回滚路径。", "verify": "验证对象属性变化是否成功、生效范围是否可控，以及是否获得下一跳访问能力。"}, {"step": "4", "from": "Enterprise Admins", "to": "Domain Admins", "relation": "通用写入 (GenericWrite)", "idea": "先做最小化权限验证（读取对象 ACL 与关键属性），确认可写后再执行最小改动提权，避免一次性高噪声动作。", "action": "优先选择低噪声改动：组成员属性、可控委派或最小 ACL 变更；保留回滚路径。", "verify": "验证对象属性变化是否成功、生效范围是否可控，以及是否获得下一跳访问能力。"}]}, {"id": 5, "risk_level": "High", "difficulty": "中", "summary": "需要通过 2 个组成员关系逐步提升权限。", "attack_methods": ["本地管理员", "组成员关系", "通用写入 (GenericWrite)", "完全控制 (GenericAll)"], "steps": [{"step": 1, "from": "svc-alfresco", "to": "Service Accounts", "relation": "组成员关系", "description": "是 Service Accounts 的成员"}, {"step": 2, "from": "Service Accounts", "to": "Privileged IT Accounts", "relation": "组成员关系", "description": "是 Privileged IT Accounts 的成员"}, {"step": 3, "from": "Privileged IT Accounts", "to": "Enterprise Admins", "relation": "通用写入 (GenericWrite)", "description": "拥有 GenericWrite 权限"}, {"step": 4, "from": "Enterprise Admins", "to": "FOREST", "relation": "本地管理员", "description": "是 FOREST 的本地管理员"}, {"step": 5, "from": "FOREST", "to": "Domain Admins", "relation": "完全控制 (GenericAll)", "description": "拥有 GenericAll 权限"}], "penetration_plan": [{"step": "1", "from": "svc-alfresco", "to": "Service Accounts", "relation": "组成员关系", "idea": "利用组嵌套放大权限，先梳理组边界与继承路径，再决定提权分支。", "action": "枚举目标组的 ACL、成员结构和可达高价值对象，选择最短且噪声最低分支。", "verify": "验证组成员变更是否生效，以及是否新增关键权限边。"}, {"step": "2", "from": "Service Accounts", "to": "Privileged IT Accounts", "relation": "组成员关系", "idea": "利用组嵌套放大权限，先梳理组边界与继承路径，再决定提权分支。", "action": "枚举目标组的 ACL、成员结构和可达高价值对象，选择最短且噪声最低分支。", "verify": "验证组成员变更是否生效，以及是否新增关键权限边。"}, {"step": "3", "from": "Privileged IT Accounts", "to": "Enterprise Admins", "relation": "通用写入 (GenericWrite)", "idea": "先做最小化权限验证（读取对象 ACL 与关键属性），确认可写后再执行最小改动提权，避免一次性高噪声动作。", "action": "优先选择低噪声改动：组成员属性、可控委派或最小 ACL 变更；保留回滚路径。", "verify": "验证对象属性变化是否成功、生效范围是否可控，以及是否获得下一跳访问能力。"}, {"step": "4", "from": "Enterprise Admins", "to": "FOREST", "relation": "本地管理员", "idea": "这是横向移动核心关系，建议结合会话、票据与服务身份进行链式推进。", "action": "先确认本地管理员或委派是否可用，再构建到高价值目标的最短路径。", "verify": "验证主机控制状态、票据可用性与目标服务访问结果。"}, {"step": "5", "from": "FOREST", "to": "Domain Admins", "relation": "完全控制 (GenericAll)", "idea": "当前具备高控制权，建议先建立低可见度持久化，再推进到下一个高价值节点。", "action": "采用分阶段接管：权限接管 -> 凭据/令牌获取 -> 横向移动。", "verify": "验证目标对象控制权是否稳定，且后续链路可达。"}]}, {"id": 6, "risk_level": "High", "difficulty": "中", "summary": "通过 2 个步骤从 svc-alfresco 提升到 Domain Admins 权限", "attack_methods": ["组成员关系", "通用写入 (GenericWrite)"], "steps": [{"step": 1, "from": "svc-alfresco", "to": "Service Accounts", "relation": "组成员关系", "description": "是 Service Accounts 的成员"}, {"step": 2, "from": "Service Accounts", "to": "Domain Admins", "relation": "通用写入 (GenericWrite)", "description": "拥有 GenericWrite 权限"}], "penetration_plan": [{"step": "1", "from": "svc-alfresco", "to": "Service Accounts", "relation": "组成员关系", "idea": "利用组嵌套放大权限，先梳理组边界与继承路径，再决定提权分支。", "action": "枚举目标组的 ACL、成员结构和可达高价值对象，选择最短且噪声最低分支。", "verify": "验证组成员变更是否生效，以及是否新增关键权限边。"}, {"step": "2", "from": "Service Accounts", "to": "Domain Admins", "relation": "通用写入 (GenericWrite)", "idea": "先做最小化权限验证（读取对象 ACL 与关键属性），确认可写后再执行最小改动提权，避免一次性高噪声动作。", "action": "优先选择低噪声改动：组成员属性、可控委派或最小 ACL 变更；保留回滚路径。", "verify": "验证对象属性变化是否成功、生效范围是否可控，以及是否获得下一跳访问能力。"}]}, {"id": 7, "risk_level": "High", "difficulty": "未知", "summary": "需要通过 2 个组成员关系逐步提升权限。", "attack_methods": ["组成员关系", "通用写入 (GenericWrite)", "Contains"], "steps": [{"step": 1, "from": "svc-alfresco", "to": "Service Accounts", "relation": "组成员关系", "description": "是 Service Accounts 的成员"}, {"step": 2, "from": "Service Accounts", "to": "Enterprise Admins", "relation": "通用写入 (GenericWrite)", "description": "拥有 GenericWrite 权限"}, {"step": 3, "from": "Enterprise Admins", "to": "Administrator", "relation": "Contains", "description": "Enterprise Admins 包含成员"}, {"step": 4, "from": "Administrator", "to": "Schema Admins", "relation": "组成员关系", "description": "是 Schema Admins 的成员"}, {"step": 5, "from": "Schema Admins", "to": "Domain Admins", "relation": "通用写入 (GenericWrite)", "description": "拥有 GenericWrite 权限"}], "penetration_plan": [{"step": "1", "from": "svc-alfresco", "to": "Service Accounts", "relation": "组成员关系", "idea": "利用组嵌套放大权限，先梳理组边界与继承路径，再决定提权分支。", "action": "枚举目标组的 ACL、成员结构和可达高价值对象，选择最短且噪声最低分支。", "verify": "验证组成员变更是否生效，以及是否新增关键权限边。"}, {"step": "2", "from": "Service Accounts", "to": "Enterprise Admins", "relation": "通用写入 (GenericWrite)", "idea": "先做最小化权限验证（读取对象 ACL 与关键属性），确认可写后再执行最小改动提权，避免一次性高噪声动作。", "action": "优先选择低噪声改动：组成员属性、可控委派或最小 ACL 变更；保留回滚路径。", "verify": "验证对象属性变化是否成功、生效范围是否可控，以及是否获得下一跳访问能力。"}, {"step": "3", "from": "Enterprise Admins", "to": "Administrator", "relation": "Contains", "idea": "利用组嵌套放大权限，先梳理组边界与继承路径，再决定提权分支。", "action": "枚举目标组的 ACL、成员结构和可达高价值对象，选择最短且噪声最低分支。", "verify": "验证组成员变更是否生效，以及是否新增关键权限边。"}, {"step": "4", "from": "Administrator", "to": "Schema Admins", "relation": "组成员关系", "idea": "利用组嵌套放大权限，先梳理组边界与继承路径，再决定提权分支。", "action": "枚举目标组的 ACL、成员结构和可达高价值对象，选择最短且噪声最低分支。", "verify": "验证组成员变更是否生效，以及是否新增关键权限边。"}, {"step": "5", "from": "Schema Admins", "to": "Domain Admins", "relation": "通用写入 (GenericWrite)", "idea": "先做最小化权限验证（读取对象 ACL 与关键属性），确认可写后再执行最小改动提权，避免一次性高噪声动作。", "action": "优先选择低噪声改动：组成员属性、可控委派或最小 ACL 变更；保留回滚路径。", "verify": "验证对象属性变化是否成功、生效范围是否可控，以及是否获得下一跳访问能力。"}]}, {"id": 8, "risk_level": "High", "difficulty": "未知", "summary": "需要通过 2 个组成员关系逐步提升权限。", "attack_methods": ["组成员关系", "通用写入 (GenericWrite)", "完全控制 (GenericAll)", "Contains"], "steps": [{"step": 1, "from": "svc-alfresco", "to": "Service Accounts", "relation": "组成员关系", "description": "是 Service Accounts 的成员"}, {"step": 2, "from": "Service Accounts", "to": "Enterprise Admins", "relation": "通用写入 (GenericWrite)", "description": "拥有 GenericWrite 权限"}, {"step": 3, "from": "Enterprise Admins", "to": "Administrator", "relation": "Contains", "description": "Enterprise Admins 包含成员"}, {"step": 4, "from": "Administrator", "to": "Group Policy Creator Owners", "relation": "组成员关系", "description": "是 Group Policy Creator Owners 的成员"}, {"step": 5, "from": "Group Policy Creator Owners", "to": "Domain Admins", "relation": "完全控制 (GenericAll)", "description": "拥有 GenericAll 权限"}], "penetration_plan": [{"step": "1", "from": "svc-alfresco", "to": "Service Accounts", "relation": "组成员关系", "idea": "利用组嵌套放大权限，先梳理组边界与继承路径，再决定提权分支。", "action": "枚举目标组的 ACL、成员结构和可达高价值对象，选择最短且噪声最低分支。", "verify": "验证组成员变更是否生效，以及是否新增关键权限边。"}, {"step": "2", "from": "Service Accounts", "to": "Enterprise Admins", "relation": "通用写入 (GenericWrite)", "idea": "先做最小化权限验证（读取对象 ACL 与关键属性），确认可写后再执行最小改动提权，避免一次性高噪声动作。", "action": "优先选择低噪声改动：组成员属性、可控委派或最小 ACL 变更；保留回滚路径。", "verify": "验证对象属性变化是否成功、生效范围是否可控，以及是否获得下一跳访问能力。"}, {"step": "3", "from": "Enterprise Admins", "to": "Administrator", "relation": "Contains", "idea": "利用组嵌套放大权限，先梳理组边界与继承路径，再决定提权分支。", "action": "枚举目标组的 ACL、成员结构和可达高价值对象，选择最短且噪声最低分支。", "verify": "验证组成员变更是否生效，以及是否新增关键权限边。"}, {"step": "4", "from": "Administrator", "to": "Group Policy Creator Owners", "relation": "组成员关系", "idea": "利用组嵌套放大权限，先梳理组边界与继承路径，再决定提权分支。", "action": "枚举目标组的 ACL、成员结构和可达高价值对象，选择最短且噪声最低分支。", "verify": "验证组成员变更是否生效，以及是否新增关键权限边。"}, {"step": "5", "from": "Group Policy Creator Owners", "to": "Domain Admins", "relation": "完全控制 (GenericAll)", "idea": "当前具备高控制权，建议先建立低可见度持久化，再推进到下一个高价值节点。", "action": "采用分阶段接管：权限接管 -> 凭据/令牌获取 -> 横向移动。", "verify": "验证目标对象控制权是否稳定，且后续链路可达。"}]}, {"id": 9, "risk_level": "High", "difficulty": "未知", "summary": "需要通过 2 个组成员关系逐步提升权限。", "attack_methods": ["组成员关系", "通用写入 (GenericWrite)", "完全控制 (GenericAll)", "Contains"], "steps": [{"step": 1, "from": "svc-alfresco", "to": "Service Accounts", "relation": "组成员关系", "description": "是 Service Accounts 的成员"}, {"step": 2, "from": "Service Accounts", "to": "Enterprise Admins", "relation": "通用写入 (GenericWrite)", "description": "拥有 GenericWrite 权限"}, {"step": 3, "from": "Enterprise Admins", "to": "Administrator", "relation": "Contains", "description": "Enterprise Admins 包含成员"}, {"step": 4, "from": "Administrator", "to": "Organization Management", "relation": "组成员关系", "description": "是 Organization Management 的成员"}, {"step": 5, "from": "Organization Management", "to": "Domain Admins", "relation": "完全控制 (GenericAll)", "description": "拥有 GenericAll 权限"}], "penetration_plan": [{"step": "1", "from": "svc-alfresco", "to": "Service Accounts", "relation": "组成员关系", "idea": "利用组嵌套放大权限，先梳理组边界与继承路径，再决定提权分支。", "action": "枚举目标组的 ACL、成员结构和可达高价值对象，选择最短且噪声最低分支。", "verify": "验证组成员变更是否生效，以及是否新增关键权限边。"}, {"step": "2", "from": "Service Accounts", "to": "Enterprise Admins", "relation": "通用写入 (GenericWrite)", "idea": "先做最小化权限验证（读取对象 ACL 与关键属性），确认可写后再执行最小改动提权，避免一次性高噪声动作。", "action": "优先选择低噪声改动：组成员属性、可控委派或最小 ACL 变更；保留回滚路径。", "verify": "验证对象属性变化是否成功、生效范围是否可控，以及是否获得下一跳访问能力。"}, {"step": "3", "from": "Enterprise Admins", "to": "Administrator", "relation": "Contains", "idea": "利用组嵌套放大权限，先梳理组边界与继承路径，再决定提权分支。", "action": "枚举目标组的 ACL、成员结构和可达高价值对象，选择最短且噪声最低分支。", "verify": "验证组成员变更是否生效，以及是否新增关键权限边。"}, {"step": "4", "from": "Administrator", "to": "Organization Management", "relation": "组成员关系", "idea": "利用组嵌套放大权限，先梳理组边界与继承路径，再决定提权分支。", "action": "枚举目标组的 ACL、成员结构和可达高价值对象，选择最短且噪声最低分支。", "verify": "验证组成员变更是否生效，以及是否新增关键权限边。"}, {"step": "5", "from": "Organization Management", "to": "Domain Admins", "relation": "完全控制 (GenericAll)", "idea": "当前具备高控制权，建议先建立低可见度持久化，再推进到下一个高价值节点。", "action": "采用分阶段接管：权限接管 -> 凭据/令牌获取 -> 横向移动。", "verify": "验证目标对象控制权是否稳定，且后续链路可达。"}]}, {"id": 10, "risk_level": "High", "difficulty": "未知", "summary": "通过 4 个步骤从 svc-alfresco 提升到 Domain Admins 权限", "attack_methods": ["组成员关系", "通用写入 (GenericWrite)", "Contains"], "steps": [{"step": 1, "from": "svc-alfresco", "to": "Service Accounts", "relation": "组成员关系", "description": "是 Service Accounts 的成员"}, {"step": 2, "from": "Service Accounts", "to": "Enterprise Admins", "relation": "通用写入 (GenericWrite)", "description": "拥有 GenericWrite 权限"}, {"step": 3, "from": "Enterprise Admins", "to": "Administrator", "relation": "Contains", "description": "Enterprise Admins 包含成员"}, {"step": 4, "from": "Administrator", "to": "Domain Admins", "relation": "通用写入 (GenericWrite)", "description": "拥有 GenericWrite 权限 (Domain Admins@HTB.LOCAL)"}], "penetration_plan": [{"step": "1", "from": "svc-alfresco", "to": "Service Accounts", "relation": "组成员关系", "idea": "利用组嵌套放大权限，先梳理组边界与继承路径，再决定提权分支。", "action": "枚举目标组的 ACL、成员结构和可达高价值对象，选择最短且噪声最低分支。", "verify": "验证组成员变更是否生效，以及是否新增关键权限边。"}, {"step": "2", "from": "Service Accounts", "to": "Enterprise Admins", "relation": "通用写入 (GenericWrite)", "idea": "先做最小化权限验证（读取对象 ACL 与关键属性），确认可写后再执行最小改动提权，避免一次性高噪声动作。", "action": "优先选择低噪声改动：组成员属性、可控委派或最小 ACL 变更；保留回滚路径。", "verify": "验证对象属性变化是否成功、生效范围是否可控，以及是否获得下一跳访问能力。"}, {"step": "3", "from": "Enterprise Admins", "to": "Administrator", "relation": "Contains", "idea": "利用组嵌套放大权限，先梳理组边界与继承路径，再决定提权分支。", "action": "枚举目标组的 ACL、成员结构和可达高价值对象，选择最短且噪声最低分支。", "verify": "验证组成员变更是否生效，以及是否新增关键权限边。"}, {"step": "4", "from": "Administrator", "to": "Domain Admins", "relation": "通用写入 (GenericWrite)", "idea": "先做最小化权限验证（读取对象 ACL 与关键属性），确认可写后再执行最小改动提权，避免一次性高噪声动作。", "action": "优先选择低噪声改动：组成员属性、可控委派或最小 ACL 变更；保留回滚路径。", "verify": "验证对象属性变化是否成功、生效范围是否可控，以及是否获得下一跳访问能力。"}]}, {"id": 11, "risk_level": "High", "difficulty": "未知", "summary": "通过 5 个步骤从 svc-alfresco 提升到 Domain Admins 权限", "attack_methods": ["通用写入 (GenericWrite)", "本地管理员", "组成员关系", "完全控制 (GenericAll)", "Contains"], "steps": [{"step": 1, "from": "svc-alfresco", "to": "Service Accounts", "relation": "组成员关系", "description": "是 Service Accounts 的成员"}, {"step": 2, "from": "Service Accounts", "to": "Enterprise Admins", "relation": "通用写入 (GenericWrite)", "description": "拥有 GenericWrite 权限"}, {"step": 3, "from": "Enterprise Admins", "to": "Administrator", "relation": "Contains", "description": "Enterprise Admins 包含成员"}, {"step": 4, "from": "Administrator", "to": "FOREST", "relation": "本地管理员", "description": "是 FOREST 的本地管理员"}, {"step": 5, "from": "FOREST", "to": "Domain Admins", "relation": "完全控制 (GenericAll)", "description": "拥有 GenericAll 权限"}], "penetration_plan": [{"step": "1", "from": "svc-alfresco", "to": "Service Accounts", "relation": "组成员关系", "idea": "利用组嵌套放大权限，先梳理组边界与继承路径，再决定提权分支。", "action": "枚举目标组的 ACL、成员结构和可达高价值对象，选择最短且噪声最低分支。", "verify": "验证组成员变更是否生效，以及是否新增关键权限边。"}, {"step": "2", "from": "Service Accounts", "to": "Enterprise Admins", "relation": "通用写入 (GenericWrite)", "idea": "先做最小化权限验证（读取对象 ACL 与关键属性），确认可写后再执行最小改动提权，避免一次性高噪声动作。", "action": "优先选择低噪声改动：组成员属性、可控委派或最小 ACL 变更；保留回滚路径。", "verify": "验证对象属性变化是否成功、生效范围是否可控，以及是否获得下一跳访问能力。"}, {"step": "3", "from": "Enterprise Admins", "to": "Administrator", "relation": "Contains", "idea": "利用组嵌套放大权限，先梳理组边界与继承路径，再决定提权分支。", "action": "枚举目标组的 ACL、成员结构和可达高价值对象，选择最短且噪声最低分支。", "verify": "验证组成员变更是否生效，以及是否新增关键权限边。"}, {"step": "4", "from": "Administrator", "to": "FOREST", "relation": "本地管理员", "idea": "这是横向移动核心关系，建议结合会话、票据与服务身份进行链式推进。", "action": "先确认本地管理员或委派是否可用，再构建到高价值目标的最短路径。", "verify": "验证主机控制状态、票据可用性与目标服务访问结果。"}, {"step": "5", "from": "FOREST", "to": "Domain Admins", "relation": "完全控制 (GenericAll)", "idea": "当前具备高控制权，建议先建立低可见度持久化，再推进到下一个高价值节点。", "action": "采用分阶段接管：权限接管 -> 凭据/令牌获取 -> 横向移动。", "verify": "验证目标对象控制权是否稳定，且后续链路可达。"}]}, {"id": 12, "risk_level": "High", "difficulty": "未知", "summary": "需要通过 2 个组成员关系逐步提升权限。", "attack_methods": ["组成员关系", "通用写入 (GenericWrite)", "Contains"], "steps": [{"step": 1, "from": "svc-alfresco", "to": "Service Accounts", "relation": "组成员关系", "description": "是 Service Accounts 的成员"}, {"step": 2, "from": "Service Accounts", "to": "Enterprise Admins", "relation": "通用写入 (GenericWrite)", "description": "拥有 GenericWrite 权限"}, {"step": 3, "from": "Enterprise Admins", "to": "Denied RODC Password Replication Group", "relation": "组成员关系", "description": "是 Denied RODC Password Replication Group 的成员"}, {"step": 4, "from": "Denied RODC Password Replication Group", "to": "krbtgt", "relation": "Contains", "description": "Denied RODC Password Replication Group 包含成员"}, {"step": 5, "from": "krbtgt", "to": "Domain Admins", "relation": "通用写入 (GenericWrite)", "description": "拥有 GenericWrite 权限 (Domain Admins@HTB.LOCAL)"}], "penetration_plan": [{"step": "1", "from": "svc-alfresco", "to": "Service Accounts", "relation": "组成员关系", "idea": "利用组嵌套放大权限，先梳理组边界与继承路径，再决定提权分支。", "action": "枚举目标组的 ACL、成员结构和可达高价值对象，选择最短且噪声最低分支。", "verify": "验证组成员变更是否生效，以及是否新增关键权限边。"}, {"step": "2", "from": "Service Accounts", "to": "Enterprise Admins", "relation": "通用写入 (GenericWrite)", "idea": "先做最小化权限验证（读取对象 ACL 与关键属性），确认可写后再执行最小改动提权，避免一次性高噪声动作。", "action": "优先选择低噪声改动：组成员属性、可控委派或最小 ACL 变更；保留回滚路径。", "verify": "验证对象属性变化是否成功、生效范围是否可控，以及是否获得下一跳访问能力。"}, {"step": "3", "from": "Enterprise Admins", "to": "Denied RODC Password Replication Group", "relation": "组成员关系", "idea": "利用组嵌套放大权限，先梳理组边界与继承路径，再决定提权分支。", "action": "枚举目标组的 ACL、成员结构和可达高价值对象，选择最短且噪声最低分支。", "verify": "验证组成员变更是否生效，以及是否新增关键权限边。"}, {"step": "4", "from": "Denied RODC Password Replication Group", "to": "krbtgt", "relation": "Contains", "idea": "利用组嵌套放大权限，先梳理组边界与继承路径，再决定提权分支。", "action": "枚举目标组的 ACL、成员结构和可达高价值对象，选择最短且噪声最低分支。", "verify": "验证组成员变更是否生效，以及是否新增关键权限边。"}, {"step": "5", "from": "krbtgt", "to": "Domain Admins", "relation": "通用写入 (GenericWrite)", "idea": "先做最小化权限验证（读取对象 ACL 与关键属性），确认可写后再执行最小改动提权，避免一次性高噪声动作。", "action": "优先选择低噪声改动：组成员属性、可控委派或最小 ACL 变更；保留回滚路径。", "verify": "验证对象属性变化是否成功、生效范围是否可控，以及是否获得下一跳访问能力。"}]}];
+
+        document.getElementById('src').textContent = sourceName;
+        document.getElementById('dst').textContent = targetName;
+        document.getElementById('count-pill').textContent = '候选路径: ' + paths.length;
+
+        const select = document.getElementById('path-select');
+        paths.forEach((p, i) => {
+            const opt = document.createElement('option');
+            opt.value = i;
+            opt.textContent = `路径 #${p.id} | 风险:${p.risk_level} | 步骤:${p.steps.length}`;
+            select.appendChild(opt);
+        });
+
+        const svg = d3.select('#graph');
+        const g = svg.append('g');
+        const width = document.getElementById('graph').clientWidth;
+        const height = document.getElementById('graph').clientHeight;
+
+        const defs = svg.append('defs');
+        defs.append('marker')
+            .attr('id', 'arrow')
+            .attr('viewBox', '0 -5 10 10')
+            .attr('refX', 22)
+            .attr('refY', 0)
+            .attr('markerWidth', 5)
+            .attr('markerHeight', 5)
+            .attr('orient', 'auto')
+            .append('path')
+            .attr('d', 'M0,-5L10,0L0,5')
+            .attr('fill', '#8ea6d1');
+
+        const zoom = d3.zoom().scaleExtent([0.45, 2.8]).on('zoom', e => g.attr('transform', e.transform));
+        svg.call(zoom);
+
+        function relationClass(rel) {
+            const r = (rel || '').toLowerCase();
+            if (r.includes('all') || r.includes('owns') || r.includes('shadow')) return 'link high';
+            if (r.includes('write') || r.includes('session') || r.includes('delegate')) return 'link medium';
+            return 'link';
+        }
+
+        function fallbackPlan(step) {
+            return {
+                relation: step.relation,
+                idea: '基于该关系评估权限扩展与横向可达性。',
+                action: '先验证关系有效，再执行最小化策略推进下一跳。',
+                verify: '确认新增可达边或更高权限上下文。'
+            };
+        }
+
+        function drawPath(index) {
+            const p = paths[index];
+            if (!p) return;
+
+            g.selectAll('*').remove();
+
+            const nodeMap = new Map();
+            p.steps.forEach((s, i) => {
+                if (!nodeMap.has(s.from)) nodeMap.set(s.from, { id:s.from, label:s.from, x:120 + i*170, y:height/2 - 60 });
+                if (!nodeMap.has(s.to)) nodeMap.set(s.to, { id:s.to, label:s.to, x:260 + i*170, y:height/2 + 70 });
+            });
+            const nodes = Array.from(nodeMap.values());
+            const links = p.steps.map(s => ({ source:s.from, target:s.to, relation:s.relation, description:s.description }));
+
+            const sim = d3.forceSimulation(nodes)
+                .force('link', d3.forceLink(links).id(d => d.id).distance(180))
+                .force('charge', d3.forceManyBody().strength(-560))
+                .force('center', d3.forceCenter(width/2, height/2))
+                .force('collision', d3.forceCollide().radius(65));
+
+            const link = g.append('g').selectAll('line').data(links).join('line').attr('class', d => relationClass(d.relation));
+            const label = g.append('g').selectAll('text').data(links).join('text').attr('class', 'link-label').text(d => (d.relation || '').slice(0, 28));
+            const node = g.append('g').selectAll('g').data(nodes).join('g').attr('class', 'node');
+
+            node.append('circle')
+                .attr('r', d => (d.id === sourceName || d.id === targetName) ? 34 : 28)
+                .attr('fill', d => {
+                    const n = (d.id || '').toLowerCase();
+                    if (d.id === sourceName) return '#3be8a5';
+                    if (d.id === targetName) return '#ff5f7a';
+                    if (n.includes('admin') || n.includes('domain')) return '#ffd06a';
+                    if (n.includes('group')) return '#ffe47f';
+                    return '#8fb8ff';
+                });
+
+            node.append('text').attr('dy', 46).text(d => d.label.length > 18 ? d.label.slice(0, 18) + '…' : d.label);
+
+            node.call(d3.drag()
+                .on('start', e => { if (!e.active) sim.alphaTarget(0.3).restart(); e.subject.fx = e.subject.x; e.subject.fy = e.subject.y; })
+                .on('drag', e => { e.subject.fx = e.x; e.subject.fy = e.y; })
+                .on('end', e => { if (!e.active) sim.alphaTarget(0); e.subject.fx = null; e.subject.fy = null; }));
+
+            sim.on('tick', () => {
+                link.attr('x1', d => d.source.x).attr('y1', d => d.source.y).attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+                label.attr('x', d => (d.source.x + d.target.x)/2).attr('y', d => (d.source.y + d.target.y)/2 - 6);
+                node.attr('transform', d => `translate(${d.x},${d.y})`);
+            });
+
+            document.getElementById('summary').innerHTML = `
+                <div><b>路径摘要</b></div>
+                <div class="v" style="margin-top:6px;">${p.summary || '无摘要'}</div>
+                <div class="v" style="margin-top:6px;">风险: <span class="risk">${p.risk_level}</span> | 难度: ${p.difficulty}</div>
+                <div class="v" style="margin-top:4px;">技术: ${(p.attack_methods || []).join(' / ')}</div>
+            `;
+
+            const stepsBox = document.getElementById('steps');
+            const plans = (p.penetration_plan && p.penetration_plan.length > 0) ? p.penetration_plan : [];
+            stepsBox.innerHTML = p.steps.map((s, i) => {
+                const plan = plans.find(x => String(x.step) === String(s.step)) || fallbackPlan(s);
+                return `
+                    <div class="step-card">
+                        <div class="step-h">步骤 ${s.step}: ${s.from} -> ${s.to}</div>
+                        <div class="step-r">关系: ${s.relation}</div>
+                        <div class="k">图谱证据</div>
+                        <div class="v">${s.description || '关系存在且可达。'}</div>
+                        <div class="k">思路</div>
+                        <div class="v">${plan.idea || '评估该关系是否可用于权限扩展。'}</div>
+                        <div class="k">执行路径</div>
+                        <div class="v">${plan.action || '先验证再推进下一跳。'}</div>
+                        <div class="k">验证标准</div>
+                        <div class="v">${plan.verify || '确认新权限或可达边已出现。'}</div>
+                    </div>
+                `;
+            }).join('');
+
+            svg.transition().duration(380).call(zoom.transform, d3.zoomIdentity.translate(35, 18).scale(0.95));
+        }
+
+        select.addEventListener('change', e => drawPath(Number(e.target.value || 0)));
+        drawPath(0);
+    </script>
+</body>
+</html>

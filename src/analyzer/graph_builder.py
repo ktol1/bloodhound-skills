@@ -296,6 +296,62 @@ class DomainGraphBuilder:
         """根据名称获取节点 SID"""
         return self._find_sid_by_name(name)
 
+    def search_nodes(self, keyword: str, limit: int = 20) -> List[Dict[str, Any]]:
+        """按关键字搜索节点（名称包含匹配）"""
+        kw = (keyword or "").strip().upper()
+        if not kw:
+            return []
+
+        matches: List[Dict[str, Any]] = []
+        for sid in self.G.nodes:
+            node = self.G.nodes[sid]
+            name = node.get("name", "")
+            if kw in name.upper():
+                matches.append({
+                    "sid": sid,
+                    "name": name,
+                    "type": node.get("node_type", "unknown"),
+                    "domain": node.get("domain", ""),
+                    "is_high_value": self.is_high_value_target(sid)
+                })
+
+        # 先按高价值目标排序，再按名称排序
+        matches.sort(key=lambda x: (not x["is_high_value"], x["name"]))
+        return matches[:limit]
+
+    def resolve_node_candidates(self, identifier: str, limit: int = 10) -> List[str]:
+        """解析节点候选（支持 SID、精确名、模糊名）"""
+        if not identifier:
+            return []
+
+        if identifier in self.G.nodes:
+            return [identifier]
+
+        exact = self.get_node_by_name(identifier)
+        if exact and exact in self.G.nodes:
+            return [exact]
+
+        kw = identifier.strip().upper()
+        if not kw:
+            return []
+
+        candidates: List[str] = []
+        for sid in self.G.nodes:
+            name = self.G.nodes[sid].get("name", "")
+            if kw in name.upper():
+                candidates.append(sid)
+
+        # 去重并限制数量
+        seen = set()
+        ordered = []
+        for sid in candidates:
+            if sid not in seen:
+                ordered.append(sid)
+                seen.add(sid)
+            if len(ordered) >= limit:
+                break
+        return ordered
+
     def get_node_by_sid(self, sid: str) -> Optional[Dict]:
         """根据 SID 获取节点信息"""
         if sid in self.G.nodes:
@@ -408,15 +464,10 @@ class PathFinder:
 
     def _resolve_node(self, identifier: str) -> Optional[str]:
         """解析节点标识符（名称或 SID）"""
-        # 检查是否为 SID
-        if identifier in self.G.nodes:
-            return identifier
-
-        # 尝试通过名称查找
-        sid = self.graph_builder.get_node_by_name(identifier)
-        if sid and sid in self.G.nodes:
-            return sid
-
+        candidates = self.graph_builder.resolve_node_candidates(identifier, limit=2)
+        # 仅在唯一匹配时自动解析，避免误判
+        if len(candidates) == 1:
+            return candidates[0]
         return None
 
     def _format_path(self, path: List[str]) -> Optional[List[Dict]]:

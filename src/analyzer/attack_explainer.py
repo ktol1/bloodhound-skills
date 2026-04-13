@@ -305,6 +305,60 @@ class AttackChainExplainer:
 
         return "\n".join(lines)
 
+    def generate_penetration_plan(self, attack_chain: AttackChain) -> List[Dict[str, str]]:
+        """生成每一步的详细渗透思路（方法、目标、验证点）"""
+        if not attack_chain:
+            return []
+
+        plans: List[Dict[str, str]] = []
+        for step in attack_chain.steps:
+            rel = (step.relation or "").lower()
+
+            if rel in ["genericwrite", "writedacl", "writeowner", "allextendedrights"]:
+                idea = "先做最小化权限验证（读取对象 ACL 与关键属性），确认可写后再执行最小改动提权，避免一次性高噪声动作。"
+                action = "优先选择低噪声改动：组成员属性、可控委派或最小 ACL 变更；保留回滚路径。"
+                verify = "验证对象属性变化是否成功、生效范围是否可控，以及是否获得下一跳访问能力。"
+            elif rel in ["genericall", "owns"]:
+                idea = "当前具备高控制权，建议先建立低可见度持久化，再推进到下一个高价值节点。"
+                action = "采用分阶段接管：权限接管 -> 凭据/令牌获取 -> 横向移动。"
+                verify = "验证目标对象控制权是否稳定，且后续链路可达。"
+            elif "session" in rel:
+                idea = "基于会话关系优先做凭据与令牌收集，寻找通往高价值资产的下一跳。"
+                action = "在会话主机侧进行最小化枚举，优先确认管理员令牌与可复用凭据。"
+                verify = "验证凭据有效性和会话可复用性，确认是否可访问下一节点。"
+            elif rel in ["memberof", "contains"]:
+                idea = "利用组嵌套放大权限，先梳理组边界与继承路径，再决定提权分支。"
+                action = "枚举目标组的 ACL、成员结构和可达高价值对象，选择最短且噪声最低分支。"
+                verify = "验证组成员变更是否生效，以及是否新增关键权限边。"
+            elif rel in ["addkeycredentiallink"]:
+                idea = "该关系通常可用于无密码身份伪造，属于高风险高收益链路。"
+                action = "先做环境兼容性验证，再以最小化方式添加凭据并立即测试可达性。"
+                verify = "验证伪造身份是否可成功认证，并确认目标对象访问权限提升。"
+            elif rel in ["forcechangepassword", "resetpassword"]:
+                idea = "可通过密码控制快速接管目标账户，但需要关注操作可见性。"
+                action = "优先选择短时间窗口执行并同步准备后续横向移动动作。"
+                verify = "验证新凭据可用性、会话建立成功率与关键服务访问能力。"
+            elif rel in ["localadmin", "allowedtodelegate", "unconstraineddelegation"]:
+                idea = "这是横向移动核心关系，建议结合会话、票据与服务身份进行链式推进。"
+                action = "先确认本地管理员或委派是否可用，再构建到高价值目标的最短路径。"
+                verify = "验证主机控制状态、票据可用性与目标服务访问结果。"
+            else:
+                idea = "先验证当前边的可利用性，再衔接下一跳。"
+                action = "采用小步推进策略，每一步都保留可回滚与替代路线。"
+                verify = "验证该步是否产出新的可达边或更高权限上下文。"
+
+            plans.append({
+                "step": str(step.step_number),
+                "from": step.from_name,
+                "to": step.to_name,
+                "relation": step.attack_method,
+                "idea": idea,
+                "action": action,
+                "verify": verify
+            })
+
+        return plans
+
     def _generate_summary(self, source: str, target: str, 
                         steps: List[AttackStep],
                         attack_methods: List[str]) -> str:

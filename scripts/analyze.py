@@ -5,8 +5,11 @@ BloodHound Analyzer 快速分析脚本
     python scripts/analyze.py <数据目录>           # 显示统计信息
     python scripts/analyze.py <数据目录> user <username>    # 查询用户
     python scripts/analyze.py <数据目录> path <source> <target>  # 查找路径
+    python scripts/analyze.py <数据目录> pathx <source> <target> [max_hops]  # 任意节点+详细渗透思路
+    python scripts/analyze.py <数据目录> agentpath <source> <target> [max_hops] # 生成供AI继续分析的结构化上下文
+    python scripts/analyze.py <数据目录> nodes <keyword>  # 搜索节点
     python scripts/analyze.py <数据目录> report    # 生成安全报告
-    python scripts/analyze.py <数据目录> visualize # 生成可视化
+    python scripts/analyze.py <数据目录> visualize <source> <target> [max_hops] # 生成源到目标的路径专用可视化
 """
 
 import sys
@@ -17,6 +20,24 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.analyzer.core import BloodHoundAnalyzer
 from src.analyzer.visualizer import VisualizationGenerator, ReportGenerator
+
+
+def _print_chain_detail(chain: dict):
+    print(f"路径步数: {chain.get('steps', 0)} | 风险: {chain.get('risk_level', '未知')} | 难度: {chain.get('difficulty', '未知')}")
+    print(f"摘要: {chain.get('summary', '')}")
+    print("\n详细步骤:")
+    for step in chain.get('path', []):
+        print(f"  [{step['step']}] {step['from']} --[{step['relation']}]--> {step['to']}")
+        print(f"       说明: {step.get('description', '')}")
+
+    plans = chain.get('penetration_plan', [])
+    if plans:
+        print("\n详细渗透思路:")
+        for p in plans:
+            print(f"  [{p.get('step', '?')}] {p.get('from', '')} -> {p.get('to', '')} ({p.get('relation', '')})")
+            print(f"       思路: {p.get('idea', '')}")
+            print(f"       执行: {p.get('action', '')}")
+            print(f"       验证: {p.get('verify', '')}")
 
 
 def main():
@@ -91,19 +112,99 @@ def main():
 
         path = analyzer.find_attack_path(source, target)
         if path.get('found'):
-            print(f"找到 {path['steps']} 步路径 (风险: {path['risk_level']})")
-            print(f"摘要: {path['summary']}\n")
-            for step in path['path']:
-                print(f"  {step['step']}. {step['from']} --[{step['relation']}]--> {step['to']}")
+            _print_chain_detail(path)
         else:
             print(f"未找到路径: {path.get('message', '')}")
+            if path.get('source_candidates'):
+                print("源节点候选:")
+                for n in path.get('source_candidates', []):
+                    print(f"  - {n}")
+            if path.get('target_candidates'):
+                print("目标节点候选:")
+                for n in path.get('target_candidates', []):
+                    print(f"  - {n}")
 
-        print(f"\n查找���有路径 (最多5跳)...")
+        print(f"\n查找所有路径 (最多5跳)...")
         all_paths = analyzer.find_all_paths(source, target, max_hops=5)
         if all_paths.get('found'):
             print(f"发现 {all_paths['path_count']} 条路径")
         else:
             print("未找到任何路径")
+
+    elif cmd == "pathx" and len(args) >= 3:
+        source = args[1]
+        target = args[2]
+        max_hops = int(args[3]) if len(args) >= 4 and str(args[3]).isdigit() else 6
+
+        print(f"\n=== 任意节点攻击路径与渗透思路: {source} -> {target} ===\n")
+
+        all_paths = analyzer.find_all_paths(source, target, max_hops=max_hops)
+        if not all_paths.get('found'):
+            print(f"未找到路径: {all_paths.get('message', '')}")
+            if all_paths.get('source_candidates'):
+                print("\n源节点候选:")
+                for n in all_paths.get('source_candidates', []):
+                    print(f"  - {n}")
+            if all_paths.get('target_candidates'):
+                print("\n目标节点候选:")
+                for n in all_paths.get('target_candidates', []):
+                    print(f"  - {n}")
+            print("\n可先用 nodes 命令搜索节点名，例如:")
+            print("  python scripts/analyze.py BloodHoundData nodes Admin")
+            return
+
+        print(f"共发现 {all_paths['path_count']} 条路径，展示前 3 条高价值链路:\n")
+        for idx, chain in enumerate(all_paths.get('paths', [])[:3], 1):
+            print(f"\n--- 路径 {idx} ---")
+            _print_chain_detail(chain)
+
+    elif cmd == "agentpath" and len(args) >= 3:
+        source = args[1]
+        target = args[2]
+        max_hops = int(args[3]) if len(args) >= 4 and str(args[3]).isdigit() else 6
+
+        print(f"\n=== Agent Handoff: {source} -> {target} ===\n")
+        handoff = analyzer.build_agent_handoff(source, target, max_hops=max_hops)
+
+        if not handoff.get("found"):
+            print(f"[!] {handoff.get('message', '未找到路径')}")
+            if handoff.get("source_candidates"):
+                print("源节点候选:")
+                for n in handoff.get("source_candidates", []):
+                    print(f"  - {n}")
+            if handoff.get("target_candidates"):
+                print("目标节点候选:")
+                for n in handoff.get("target_candidates", []):
+                    print(f"  - {n}")
+            return
+
+        print(f"路径总数: {handoff.get('path_count', 0)}")
+        rec = handoff.get("recommended_path", {})
+        print(f"推荐路径: 风险={rec.get('risk_level', 'Unknown')} | 步数={rec.get('steps', 0)}")
+        print("\n推荐路径步骤:")
+        for s in rec.get("path", []):
+            print(f"  [{s.get('step')}] {s.get('from')} --[{s.get('relation')}]--> {s.get('to')}")
+
+        print("\nAI 连续分析提示词:")
+        print(handoff.get("continuation_prompt", ""))
+
+        out_file = "agent_handoff.json"
+        with open(out_file, "w", encoding="utf-8") as f:
+            json.dump(handoff, f, ensure_ascii=False, indent=2)
+        print(f"\n[+] 已生成 {out_file}")
+
+    elif cmd == "nodes" and len(args) >= 2:
+        keyword = " ".join(args[1:])
+        result = analyzer.search_nodes(keyword, limit=15)
+
+        print(f"\n=== 节点搜索: {keyword} ===\n")
+        if result.get("count", 0) == 0:
+            print("未找到匹配节点")
+            return
+
+        print(f"匹配到 {result['count']} 个节点:")
+        for i, n in enumerate(result["nodes"], 1):
+            print(f"  {i}. {n['name']} ({n['type']})")
 
     elif cmd == "compromise" and len(args) >= 2:
         username = " ".join(args[1:])
@@ -182,15 +283,38 @@ def main():
 
         viz_gen = VisualizationGenerator(analyzer)
 
-        paths = analyzer.find_all_paths("svc-alfresco", "Domain Admins", max_hops=5)
-        if paths.get('found'):
-            html = viz_gen.generate_attack_path_html(
-                paths['paths'][:10],
-                title="Attack Path Analysis - svc-alfresco"
-            )
-            with open("attack_paths.html", "w", encoding="utf-8") as f:
-                f.write(html)
-            print("[+] 已生成 attack_paths.html")
+        if len(args) < 3:
+            print("[!] visualize 模式需要 source 和 target")
+            print("示例:")
+            print("  python scripts/analyze.py BloodHoundData visualize svc-alfresco \"Domain Admins\" 5")
+            return
+
+        source = args[1]
+        target = args[2]
+        max_hops = int(args[3]) if len(args) >= 4 and str(args[3]).isdigit() else 5
+
+        paths = analyzer.find_all_paths(source, target, max_hops=max_hops)
+        if not paths.get('found'):
+            print(f"[!] 未找到路径: {paths.get('message', '')}")
+            if paths.get('source_candidates'):
+                print("源节点候选:")
+                for n in paths.get('source_candidates', []):
+                    print(f"  - {n}")
+            if paths.get('target_candidates'):
+                print("目标节点候选:")
+                for n in paths.get('target_candidates', []):
+                    print(f"  - {n}")
+            return
+
+        html = viz_gen.generate_path_focus_html(
+            source=source,
+            target=target,
+            paths=paths.get('paths', [])[:12],
+            title=f"Path Explorer - {source} -> {target}"
+        )
+        with open("attack_paths.html", "w", encoding="utf-8") as f:
+            f.write(html)
+        print(f"[+] 已生成 attack_paths.html (路径数: {min(paths.get('path_count', 0), 12)})")
 
         print("[+] 完成")
 

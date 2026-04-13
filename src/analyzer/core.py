@@ -243,6 +243,51 @@ class BloodHoundAnalyzer:
         if not self._is_loaded:
             return {"error": "数据未加载"}
 
+        source_candidates = self.graph_builder.resolve_node_candidates(source, limit=8)
+        target_candidates = self.graph_builder.resolve_node_candidates(target, limit=8)
+
+        if not source_candidates:
+            return {
+                "found": False,
+                "source": source,
+                "target": target,
+                "message": f"未找到源节点: {source}",
+                "source_candidates": []
+            }
+
+        if not target_candidates:
+            return {
+                "found": False,
+                "source": source,
+                "target": target,
+                "message": f"未找到目标节点: {target}",
+                "target_candidates": []
+            }
+
+        if len(source_candidates) > 1:
+            return {
+                "found": False,
+                "source": source,
+                "target": target,
+                "message": f"源节点匹配到多个对象，请使用更精确名称: {source}",
+                "source_candidates": [
+                    self.graph_builder.get_node_by_sid(sid).get("name", sid)
+                    for sid in source_candidates
+                ]
+            }
+
+        if len(target_candidates) > 1:
+            return {
+                "found": False,
+                "source": source,
+                "target": target,
+                "message": f"目标节点匹配到多个对象，请使用更精确名称: {target}",
+                "target_candidates": [
+                    self.graph_builder.get_node_by_sid(sid).get("name", sid)
+                    for sid in target_candidates
+                ]
+            }
+
         # 查找最短路径
         path = self.path_finder.find_shortest_path(source, target)
         
@@ -266,6 +311,7 @@ class BloodHoundAnalyzer:
             "difficulty": chain.difficulty if chain else "未知",
             "risk_level": chain.risk_level if chain else "未知",
             "summary": chain.summary if chain else "",
+            "penetration_plan": self.explainer.generate_penetration_plan(chain) if chain else [],
             "path": [
                 {
                     "step": step.step_number,
@@ -292,6 +338,43 @@ class BloodHoundAnalyzer:
         """
         if not self._is_loaded:
             return {"error": "数据未加载"}
+
+        source_candidates = self.graph_builder.resolve_node_candidates(source, limit=8)
+        target_candidates = self.graph_builder.resolve_node_candidates(target, limit=8)
+
+        if not source_candidates or not target_candidates:
+            return {
+                "found": False,
+                "source": source,
+                "target": target,
+                "paths": [],
+                "message": "源节点或目标节点不存在",
+                "source_candidates": [
+                    self.graph_builder.get_node_by_sid(sid).get("name", sid)
+                    for sid in source_candidates
+                ],
+                "target_candidates": [
+                    self.graph_builder.get_node_by_sid(sid).get("name", sid)
+                    for sid in target_candidates
+                ]
+            }
+
+        if len(source_candidates) > 1 or len(target_candidates) > 1:
+            return {
+                "found": False,
+                "source": source,
+                "target": target,
+                "paths": [],
+                "message": "源节点或目标节点匹配不唯一，请用更精确名称",
+                "source_candidates": [
+                    self.graph_builder.get_node_by_sid(sid).get("name", sid)
+                    for sid in source_candidates
+                ],
+                "target_candidates": [
+                    self.graph_builder.get_node_by_sid(sid).get("name", sid)
+                    for sid in target_candidates
+                ]
+            }
 
         paths = self.path_finder.find_all_paths(source, target, max_hops)
         
@@ -323,6 +406,7 @@ class BloodHoundAnalyzer:
                     "difficulty": chain.difficulty,
                     "risk_level": chain.risk_level,
                     "summary": chain.summary,
+                    "penetration_plan": self.explainer.generate_penetration_plan(chain),
                     "path": [
                         {
                             "step": step.step_number,
@@ -336,6 +420,94 @@ class BloodHoundAnalyzer:
                 }
                 for chain in chains
             ]
+        }
+
+    def search_nodes(self, keyword: str, limit: int = 20) -> Dict[str, Any]:
+        """按关键字搜索图节点"""
+        if not self._is_loaded:
+            return {"error": "数据未加载", "count": 0, "nodes": []}
+
+        nodes = self.graph_builder.search_nodes(keyword, limit=limit)
+        return {
+            "keyword": keyword,
+            "count": len(nodes),
+            "nodes": [
+                {
+                    "name": n["name"],
+                    "sid": n["sid"],
+                    "type": n["type"],
+                    "domain": n.get("domain", ""),
+                    "is_high_value": n.get("is_high_value", False)
+                }
+                for n in nodes
+            ]
+        }
+
+    def build_agent_handoff(self, source: str, target: str, max_hops: int = 5) -> Dict[str, Any]:
+        """
+        生成可直接交给 AI Agent 的结构化上下文。
+
+        该输出用于让任意 Agent 基于图谱结果继续推进分析，而不是重新发明流程。
+        """
+        if not self._is_loaded:
+            return {"error": "数据未加载"}
+
+        all_paths = self.find_all_paths(source, target, max_hops=max_hops)
+        if not all_paths.get("found"):
+            return {
+                "found": False,
+                "source": source,
+                "target": target,
+                "message": all_paths.get("message", "未找到路径"),
+                "source_candidates": all_paths.get("source_candidates", []),
+                "target_candidates": all_paths.get("target_candidates", [])
+            }
+
+        # 选择推荐路径：高风险优先，其次步数更短
+        risk_rank = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
+        ranked = sorted(
+            all_paths.get("paths", []),
+            key=lambda p: (risk_rank.get(p.get("risk_level", "Medium"), 2), p.get("steps", 99))
+        )
+        recommended = ranked[0] if ranked else {}
+
+        domain = self.get_domain_info().get("name", "<DOMAIN>")
+
+        continuation_prompt = (
+            "你是授权 AD 安全评估代理。"
+            "基于以下图谱路径结果，继续输出下一阶段分析，不得臆造未在图谱出现的边。"
+            "每一步必须包含：图谱证据、利用目标、前置条件、利用原理、授权实操模板、成功判据、失败排查、检测痕迹、修复建议。"
+            f"\n\n当前任务: 从 {source} 到 {target} 的路径推进。"
+            f"\n域: {domain}"
+            "\n优先处理推荐路径；若失败，按备选路径切换并说明切换依据。"
+            "\n所有模板使用占位符: <DOMAIN> <DC_IP> <USER> <TARGET_OBJECT>。"
+        )
+
+        next_actions = []
+        for step in recommended.get("path", []):
+            next_actions.append({
+                "step": step.get("step"),
+                "objective": f"将权限/可达性从 {step.get('from')} 推进到 {step.get('to')}",
+                "graph_evidence": f"{step.get('from')} --[{step.get('relation')}]--> {step.get('to')}",
+                "expected_result": "该步完成后出现新权限边或目标对象可访问",
+                "fallback": "若该步失败，回滚并切换到下一条候选路径的同阶段步骤"
+            })
+
+        return {
+            "found": True,
+            "source": source,
+            "target": target,
+            "max_hops": max_hops,
+            "path_count": all_paths.get("path_count", 0),
+            "recommended_path": recommended,
+            "alternative_paths": ranked[1:4],
+            "agent_next_actions": next_actions,
+            "continuation_prompt": continuation_prompt,
+            "commands": {
+                "verify_nodes": f"python scripts/analyze.py {self.data_dir} nodes <keyword>",
+                "query_paths": f"python scripts/analyze.py {self.data_dir} pathx \"{source}\" \"{target}\" {max_hops}",
+                "generate_view": f"python scripts/analyze.py {self.data_dir} visualize \"{source}\" \"{target}\" {max_hops}"
+            }
         }
 
     def analyze_compromise(self, identifier: str) -> Dict[str, Any]:
